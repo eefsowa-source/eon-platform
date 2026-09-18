@@ -1,0 +1,9 @@
+[submodule "third_party/simde"]
+	path = third_party/simde
+	url = https://github.com/simd-everywhere/simde
+[submodule "third_party/sst-basic-blocks"]
+	path = third_party/sst-basic-blocks
+	url = https://github.com/surge-synthesizer/sst-basic-blocks
+[submodule "third_party/sst-cpputils"]
+	path = third_party/sst-cpputils
+	url = https://github.com/surge-synthesizer/sst-cpputils
