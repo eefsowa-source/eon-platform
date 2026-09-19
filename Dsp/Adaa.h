@@ -1,5 +1,6 @@
 #pragma once
 #include <cmath>
+#include <limits>
 
 namespace eon {
 
@@ -65,7 +66,21 @@ struct ADAA2
                 const double a = x0;
                 const double b = x1;
                 const double da = a - b;
-                y = 2.0 * (f1 (a) * da - F2x0 + F2x1) / (da * da);
+                const double scale = std::fmax (std::numeric_limits<float>::min (),
+                                                std::fmax (std::abs (a), std::abs (b)));
+                const double middle_eps = 4.0 * std::numeric_limits<float>::epsilon () * scale;
+
+                if (std::abs (da) <= middle_eps)
+                {
+                    // The quotient expands as f(a) + (b-a)f'(a)/3 + O((b-a)^2).
+                    // Evaluating at this weighted center matches the linear term
+                    // and avoids cancellation in the repeated-outer quotient.
+                    y = f (a + (b - a) / 3.0);
+                }
+                else
+                {
+                    y = 2.0 * (f1 (a) * da - F2x0 + F2x1) / (da * da);
+                }
             }
         }
         else
