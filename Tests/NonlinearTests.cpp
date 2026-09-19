@@ -2,6 +2,7 @@
 #include "Tests/TestHarness.h"
 
 #include <cmath>
+#include <limits>
 
 EON_TEST_CASE("nonlinear suite smoke test")
 {
@@ -48,6 +49,57 @@ EON_TEST_CASE("ADAA2 is stable when the middle node nearly repeats the outer nod
     EON_CHECK_NEAR(actual, 2.0 / 3.0, 1e-6);
 }
 
+EON_TEST_CASE("ADAA2 remains accurate across repeated-middle ULP distances")
+{
+    struct SweepCase
+    {
+        float outer;
+        int ulps;
+    };
+    constexpr SweepCase cases[] = {
+        {1.0f, 10}, {0.5f, 10}, {0.005f, 10},
+        {1.0f, 1000}, {0.5f, 1000}, {0.005f, 1000},
+        {1.0f, 5000}, {1.0f, 5791}, {1.0f, 5793}, {1.0f, 10000}
+    };
+
+    for (const auto& sample : cases)
+    {
+        float middle = sample.outer;
+        for (int i = 0; i < sample.ulps; ++i)
+            middle = std::nextafter(middle, 0.0f);
+
+        eon::SoftClipSat saturator;
+        saturator.process(sample.outer);
+        saturator.process(middle);
+        const float actual = saturator.process(sample.outer);
+        const double center = (2.0 * sample.outer + middle) / 3.0;
+        EON_CHECK_NEAR(actual, eon::SoftClip::f(center), 1e-6);
+    }
+}
+
+EON_TEST_CASE("ADAA2 remains accurate through the middle-node switch")
+{
+    constexpr float outers[] = {0.005f, 0.5f, 1.0f};
+    constexpr double offsets[] = {0.9, 1.1};
+    const double switch_scale = std::sqrt(std::numeric_limits<float>::epsilon());
+
+    for (const float outer : outers)
+    {
+        const double scale = std::fmax(1.0, std::abs(static_cast<double>(outer)));
+        const double switch_distance = switch_scale * scale;
+        for (const double offset : offsets)
+        {
+            const float middle = static_cast<float>(outer - offset * switch_distance);
+            eon::SoftClipSat saturator;
+            saturator.process(outer);
+            saturator.process(middle);
+            const float actual = saturator.process(outer);
+            const double center = (2.0 * outer + middle) / 3.0;
+            EON_CHECK_NEAR(actual, eon::SoftClip::f(center), 1e-6);
+        }
+    }
+}
+
 EON_TEST_CASE("ADAA2 matches the repeated-outer limit across the node threshold")
 {
     constexpr float a = 0.005f;
@@ -90,6 +142,18 @@ EON_TEST_CASE("ADAA2 keeps small repeated nodes accurate")
     const double center = static_cast<double>(a)
                         + (static_cast<double>(b) - a) / 3.0;
     EON_CHECK_NEAR(actual, eon::SoftClip::f(center), 1e-8);
+}
+
+EON_TEST_CASE("ADAA2 uses the three-node centroid when all nodes are close")
+{
+    eon::SoftClipSat saturator;
+    constexpr float a = 4.9e-10f;
+    saturator.process(a);
+    saturator.process(-a);
+    const float actual = saturator.process(a);
+    const double center = (static_cast<double>(a) - a + a) / 3.0;
+
+    EON_CHECK_NEAR(actual, eon::SoftClip::f(center), 2e-17);
 }
 
 EON_TEST_CASE("ADAA2 reaches the constant-input limit")

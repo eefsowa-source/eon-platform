@@ -59,22 +59,23 @@ struct ADAA2
         {
             if (std::abs (dx01) < eps)
             {
-                y = f (x0); // x0 ~= x1 ~= x2: converged
+                y = f ((static_cast<double> (x0) + x1 + x2) / 3.0);
             }
             else
             {
                 const double a = x0;
                 const double b = x1;
                 const double da = a - b;
-                const double scale = std::fmax (std::numeric_limits<float>::min (),
+                const double scale = std::fmax (1.0,
                                                 std::fmax (std::abs (a), std::abs (b)));
-                const double middle_eps = 4.0 * std::numeric_limits<float>::epsilon () * scale;
+                const double middle_eps = std::sqrt (std::numeric_limits<float>::epsilon ()) * scale;
 
                 if (std::abs (da) <= middle_eps)
                 {
                     // The quotient expands as f(a) + (b-a)f'(a)/3 + O((b-a)^2).
-                    // Evaluating at this weighted center matches the linear term
-                    // and avoids cancellation in the repeated-outer quotient.
+                    // The centroid keeps the linear term; at this scale its
+                    // second-order error is at float precision while the quotient
+                    // still loses precision through subtraction of O(da) terms.
                     y = f (a + (b - a) / 3.0);
                 }
                 else
