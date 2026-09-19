@@ -1,8 +1,56 @@
 #include "Dsp/Adaa.h"
+#include "Dsp/Stages.h"
 #include "Tests/TestHarness.h"
 
 #include <cmath>
 #include <limits>
+#include <numbers>
+
+EON_TEST_CASE("DC blocker prepare keeps its cutoff in hertz across rates")
+{
+    const eon::DCBlocker unprepared;
+    EON_CHECK_NEAR(unprepared.R, 0.9997, 0.0);
+
+    constexpr double rates[] = {48000.0 * 8.0, 48000.0 * 16.0, 48000.0 * 32.0};
+    for (const double sample_rate : rates)
+    {
+        eon::DCBlocker blocker;
+        blocker.prepare(sample_rate, 18.0);
+        const double recovered_cutoff = -std::log(blocker.R) * sample_rate
+                                      / (2.0 * std::numbers::pi);
+        EON_CHECK_NEAR(recovered_cutoff, 18.0, 1e-10);
+    }
+}
+
+EON_TEST_CASE("DC blocker reset clears prepared impulse history")
+{
+    eon::DCBlocker blocker;
+    blocker.prepare(48000.0, 18.0);
+    EON_CHECK_NEAR(blocker.process(1.0f), 1.0, 0.0);
+    EON_CHECK(blocker.process(0.0f) < 0.0f);
+
+    blocker.reset();
+    EON_CHECK_NEAR(blocker.process(0.0f), 0.0, 0.0);
+}
+
+EON_TEST_CASE("ClassA limiting is continuous around both saturation boundaries")
+{
+    constexpr float below_boundary = 3.27077f;
+    constexpr float above_boundary = 3.27078f;
+    const auto first_output = [](float input)
+    {
+        eon::ClassAStage stage;
+        return stage.process(input);
+    };
+
+    const float positive_below = first_output(below_boundary);
+    const float positive_above = first_output(above_boundary);
+    const float negative_below = first_output(-below_boundary);
+    const float negative_above = first_output(-above_boundary);
+
+    EON_CHECK_NEAR(std::abs(positive_above - positive_below), 0.0, 1e-3);
+    EON_CHECK_NEAR(std::abs(negative_above - negative_below), 0.0, 1e-3);
+}
 
 EON_TEST_CASE("nonlinear suite smoke test")
 {
