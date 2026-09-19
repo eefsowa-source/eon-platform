@@ -56,7 +56,17 @@ struct ADAA2
         double y;
         if (std::abs (dx02) < eps)
         {
-            y = f (x0); // x0 ~= x1 ~= x2: converged
+            if (std::abs (dx01) < eps)
+            {
+                y = f (x0); // x0 ~= x1 ~= x2: converged
+            }
+            else
+            {
+                const double a = x0;
+                const double b = x1;
+                const double da = a - b;
+                y = 2.0 * (f1 (a) * da - F2x0 + F2x1) / (da * da);
+            }
         }
         else
         {
