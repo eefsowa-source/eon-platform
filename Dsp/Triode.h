@@ -66,20 +66,33 @@ struct TriodeStage
             ? std::exp (-1.0 / ((double) rkOhms * ckFarads * rateHz)) : 0.0;
     }
 
+    float solveOperatingPoint (float Vk)
+    {
+        const int savedIterations = iterations;
+        iterations = 16;
+        const float vp = solveVp (biasVg, Vk);
+        iterations = savedIterations;
+        VpPrev = vp;
+        return vp;
+    }
+
     void reset()
     {
         VpPrev = 150.f;
         cathodeVk = 0.0;
         lastIp = 0.f;
-        // Quiescent point. With a self-bias cathode the operating point is
-        // itself signal-dependent: iterate plate-solve <-> Vk = Ip*Rk until
-        // they agree (same fixed-point seeding as the Tube comp stage).
-        const int n = (cathodeRk > 0.f && cathodePole > 0.0) ? 8 : 1;
-        for (int i = 0; i < n; ++i)
+        for (int i = 0; i < 32; ++i)
         {
-            Vq = solveVp (biasVg, (float) cathodeVk);
-            cathodeVk = (double) lastIp * cathodeRk;
+            Vq = solveOperatingPoint ((float) cathodeVk);
+            const double nextVk = cathodeRk > 0.f ? (double) lastIp * cathodeRk : 0.0;
+            if (std::abs (nextVk - cathodeVk) < 1.0e-9)
+            {
+                cathodeVk = nextVk;
+                break;
+            }
+            cathodeVk = nextVk;
         }
+        Vq = solveOperatingPoint ((float) cathodeVk);
         outScale = 1.f / std::max (40.f, Bplus - Vq);
         VpPrev = Vq;
     }
@@ -116,8 +129,8 @@ struct TriodeStage
             const float f  = (Bplus - Vp) / Rload - Ip;
             const float df = -1.f / Rload - dIp;   // strictly negative -> safe
             Vp = std::clamp (Vp - f / df, 0.f, Bplus);
-            lastIp = Ip;
         }
+        lastIp = korenIp (Vg - Vk, Vp - Vk);
         return Vp;
     }
 

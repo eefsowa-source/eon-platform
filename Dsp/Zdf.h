@@ -81,8 +81,24 @@ struct Ladder4
         const double G4 = G * G * G * G;
         const double S  = G * G * G * s[0] + G * G * s[1] + G * s[2] + s[3];
 
-        double u0 = (x * drive - k * (1.0 - G) * S) / (1.0 + k * G4);
-        if (saturate) u0 = std::tanh (u0);
+        const double stateTerm = (1.0 - G) * S;
+        double u0 = (x * drive - k * stateTerm) / (1.0 + k * G4);
+        if (saturate)
+        {
+            for (int i = 0; i < 8; ++i)
+            {
+                const double arg = x * drive - k * (G4 * u0 + stateTerm);
+                const double t = std::tanh (arg);
+                const double f = u0 - t;
+                const double df = 1.0 + k * G4 * (1.0 - t * t);
+                const double next = u0 - f / df;
+                if (! std::isfinite (next))
+                    break;
+                u0 = next;
+                if (std::abs (f) < 1.0e-12)
+                    break;
+            }
+        }
 
         double u = u0;
         for (int i = 0; i < 4; ++i)

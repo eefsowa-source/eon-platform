@@ -1,6 +1,7 @@
 #pragma once
 #include <cmath>
 #include <algorithm>
+#include <numbers>
 #include "Rng.h"
 
 namespace eon {
@@ -12,6 +13,18 @@ struct DCBlocker
 {
     double x1 = 0.0, y1 = 0.0;
     double R = 0.9997;
+
+    void prepare (double sampleRate, double cutoffHz = 18.0)
+    {
+        if (! std::isfinite (sampleRate) || sampleRate <= 0.0 ||
+            ! std::isfinite (cutoffHz) || cutoffHz < 0.0)
+        {
+            R = 0.0;
+            return;
+        }
+        R = std::exp (-2.0 * std::numbers::pi * cutoffHz / sampleRate);
+    }
+
     void reset() { x1 = y1 = 0.0; }
     inline float process (float x)
     {
@@ -124,8 +137,7 @@ struct ClassAStage
         sagTh.tick (std::abs (out));
         out *= (1.0 - sagTh.sag * 0.045 - sagTh.thermal * 0.01);
 
-        if (std::abs (out) > 1.5)
-            out = 1.5 * std::tanh (out / 1.5);
+        out = 1.5 * std::tanh (out / 1.5);
 
         return (float) (out + sagTh.drift);
     }

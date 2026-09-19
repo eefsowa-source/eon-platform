@@ -11,6 +11,23 @@ projects. Include as `-I <repo>/eon_dsp`, headers under `Dsp/`.
 | `Dsp/Stages.h` | DC blocker, inductor resonator, analog air, bounded OU sag/thermal, Class-A stage |
 | `Dsp/Rng.h` | deterministic per-instance PRNG |
 
+## Runtime contracts
+
+- Call `DCBlocker::prepare(processingRateHz, cutoffHz)` before audio processing.
+- Call `Oversampler::prepare(maxBlockSize)` before `up()`/`down()`; output is
+  invariant to host block partition.
+- Each ADAA object belongs to exactly one logical processing stage and channel.
+- `reset()` establishes a finite, zero-input operating state for triodes, WDF
+  roots, filters, and oversamplers.
+
+## Test
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
+```
+
 JUCE-dependent pieces (oversampling manager, LookAndFeel) deliberately stay
 in each project's own `Source/Shared/`.
 

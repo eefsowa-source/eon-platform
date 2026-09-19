@@ -48,13 +48,17 @@ struct WdfResistor : WdfPort
 
 struct WdfCapacitor : WdfPort
 {
-    double C, state = 0.0;
+    double C, state = 0.0, voltageState = 0.0;
     explicit WdfCapacitor (double c) : C (c) {}
     void setSampleRate (double fs) { R = 1.0 / (2.0 * C * fs); }
-    void reset() override { state = 0.0; }
+    void reset() override { state = voltageState = 0.0; }
     double emitted() const override { return state; }      // b[n] = a[n-1]
-    void   incident (double a) override { state = a; }
-    double voltage() const { return state; }               // v = (a+b)/2 -> see note
+    void incident (double a) override
+    {
+        voltageState = 0.5 * (a + state);
+        state = a;
+    }
+    double voltage() const { return voltageState; }
 };
 
 struct WdfInductor : WdfPort
@@ -91,11 +95,11 @@ struct WdfVSourceIdeal : WdfPort
 struct WdfISourceRes : WdfPort
 {
     double Is = 0.0;
+    double aIn = 0.0;
     explicit WdfISourceRes (double rs) { R = rs; }
-    double emitted() const override { return 0.0; }        // emits nothing upward…
-    void   incident (double) override {}
-    // (current sources usually appear via their Norton R in a parallel junction;
-    //  expose emitted() = 0 and drive through incident handling instead)
+    double emitted() const override { return aIn - 2.0 * R * Is; }
+    void incident (double a) override { aIn = a; }
+    void reset() override { aIn = 0.0; }
 };
 
 // ------------------------------- adaptors -----------------------------------
@@ -192,18 +196,29 @@ struct WdfDiodePair : WdfPort
     void   incident (double a) override { aIn = a; }
     double emitted() const override
     {
-        double v = vPrev;
-        for (int i = 0; i < iterations; ++i)
+        const double resistance = std::max (R, 1.0e-12);
+        const double bound = std::max (std::abs (aIn), 1.0e-12);
+        const auto current = [this] (double v)
         {
-            const double f  = 2.0 * Is * std::sinh (v / Vt) - (aIn - v) / R;
-            const double df = (2.0 * Is / Vt) * std::cosh (v / Vt) + 1.0 / R;
-            const double dv = f / df;
-            v -= dv;
-            if (std::abs (dv) < 1e-12) break;
-        }
+            const double q = std::clamp (v / Vt, -40.0, 40.0);
+            return 2.0 * Is * std::sinh (q);
+        };
+        const auto residual = [this, &current, resistance] (double v)
+        {
+            return current (v) - (aIn - v) / resistance;
+        };
+        const auto derivative = [this, resistance] (double v)
+        {
+            const double q = std::clamp (v / Vt, -40.0, 40.0);
+            return (2.0 * Is / Vt) * std::cosh (q) + 1.0 / resistance;
+        };
+        const double initial = std::isfinite (vPrev) ? vPrev : 0.0;
+        const double v = newtonScalar (residual, derivative, initial,
+                                       -bound, bound, 32, 1.0e-12);
         vPrev = v;
         return 2.0 * v - aIn;
     }
+    void reset() override { aIn = vPrev = 0.0; }
 };
 
 } // namespace eon

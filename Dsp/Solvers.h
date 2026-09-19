@@ -2,6 +2,7 @@
 #include <cmath>
 #include <algorithm>
 #include <cstddef>
+#include <limits>
 #include <type_traits>
 
 namespace eon {
@@ -22,6 +23,9 @@ namespace eon {
 // W0(x) for x > 0 via w + ln(w) = ln(x). ~5 iterations to 1e-14.
 inline double lambertW0log (double logX)
 {
+    if (! std::isfinite (logX) || logX < std::log (std::numeric_limits<double>::min()))
+        return 0.0;
+
     // initial guess: asymptotic L - ln L for large logs, exp for small
     double w = logX > 1.0 ? logX - std::log (std::max (logX, 1e-10)) : std::exp (logX);
     if (! (w > 0.0)) w = 1e-10;
@@ -29,7 +33,8 @@ inline double lambertW0log (double logX)
     {
         const double f  = w + std::log (w) - logX;
         const double dw = f / (1.0 + 1.0 / w);      // Newton on g(w)=w+ln w
-        w -= dw;
+        const double next = w - dw;
+        w = next > 0.0 && std::isfinite (next) ? next : 0.5 * w;
         if (std::abs (dw) < 1e-14 * std::max (1.0, std::abs (w))) break;
     }
     return w;
