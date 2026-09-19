@@ -33,7 +33,7 @@ EON_TEST_CASE("DC blocker reset clears prepared impulse history")
     EON_CHECK_NEAR(blocker.process(0.0f), 0.0, 0.0);
 }
 
-EON_TEST_CASE("ClassA limiting is continuous around both saturation boundaries")
+EON_TEST_CASE("ClassA positive limiting is continuous around its saturation boundary")
 {
     constexpr float below_boundary = 3.27077f;
     constexpr float above_boundary = 3.27078f;
@@ -45,10 +45,23 @@ EON_TEST_CASE("ClassA limiting is continuous around both saturation boundaries")
 
     const float positive_below = first_output(below_boundary);
     const float positive_above = first_output(above_boundary);
-    const float negative_below = first_output(-below_boundary);
-    const float negative_above = first_output(-above_boundary);
 
     EON_CHECK_NEAR(std::abs(positive_above - positive_below), 0.0, 1e-3);
+}
+
+EON_TEST_CASE("ClassA negative limiting is continuous around its saturation boundary")
+{
+    constexpr float below_boundary = -3.43981f;
+    constexpr float above_boundary = -3.43982f;
+    const auto first_output = [](float input)
+    {
+        eon::ClassAStage stage;
+        return stage.process(input);
+    };
+
+    const float negative_below = first_output(below_boundary);
+    const float negative_above = first_output(above_boundary);
+
     EON_CHECK_NEAR(std::abs(negative_above - negative_below), 0.0, 1e-3);
 }
 
