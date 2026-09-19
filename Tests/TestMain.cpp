@@ -6,8 +6,15 @@
 
 int main()
 {
+    const auto& tests = eon::test::registry();
+    if (tests.empty())
+    {
+        std::cerr << "[ERROR] no tests registered\n";
+        return 1;
+    }
+
     std::size_t failures = 0;
-    for (const auto& test : eon::test::registry())
+    for (const auto& test : tests)
     {
         try
         {
@@ -26,7 +33,7 @@ int main()
         }
     }
 
-    const std::size_t total = eon::test::registry().size();
+    const std::size_t total = tests.size();
     std::cout << total - failures << '/' << total << " tests passed";
     if (failures != 0)
         std::cout << ", " << failures << " failed";

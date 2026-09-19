@@ -82,7 +82,8 @@ inline void check_near(double actual,
     static const ::eon::test::Registrar EON_TEST_DETAIL_JOIN(eon_test_registration_, unique_id)( \
         name, &EON_TEST_DETAIL_JOIN(eon_test_case_, unique_id)); \
     static void EON_TEST_DETAIL_JOIN(eon_test_case_, unique_id)()
-#define EON_TEST_CASE(name) EON_TEST_DETAIL_CASE(name, __COUNTER__)
+// Put each EON_TEST_CASE invocation on a distinct source line; __LINE__ is its unique ID.
+#define EON_TEST_CASE(name) EON_TEST_DETAIL_CASE(name, __LINE__)
 
 #define EON_CHECK(condition) \
     ::eon::test::check(static_cast<bool>(condition), #condition, __FILE__, __LINE__)
