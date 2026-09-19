@@ -75,6 +75,27 @@ EON_TEST_CASE("oversampling suite smoke test")
         EON_CHECK_NEAR(output[i], reference[i], 0.0);
 }
 
+EON_TEST_CASE("oversampler retains public stage member access")
+{
+    eon::Oversampler oversampler;
+    const void* const stage_members[] = {
+        static_cast<const void*>(&oversampler.s0),
+        static_cast<const void*>(&oversampler.s1),
+        static_cast<const void*>(&oversampler.s2)
+    };
+    EON_CHECK(stage_members[0] != stage_members[1]);
+    EON_CHECK(stage_members[1] != stage_members[2]);
+
+    oversampler.setStages(1);
+    oversampler.prepare(1);
+    const float input = 0.25f;
+    float upsampled[2] = {};
+    float output = 0.0f;
+    oversampler.up(&input, 1, upsampled);
+    oversampler.down(upsampled, &output, 1);
+    EON_CHECK(std::isfinite(output));
+}
+
 EON_TEST_CASE("oversampling round trip is independent of block partition")
 {
     std::vector<float> input(sine_sample_count);

@@ -128,28 +128,31 @@ struct HalfBand2x
 // strongest filter (lowest rate). Upsample applies 0->N, downsample N->0.
 struct Oversampler
 {
-    HalfBand2x<HbTaps71> up0, down0;
-    HalfBand2x<HbTaps47> up1, down1;
-    HalfBand2x<HbTaps35> up2, down2;
+    HalfBand2x<HbTaps71> s0;
+    HalfBand2x<HbTaps47> s1;
+    HalfBand2x<HbTaps35> s2;
     int stages = 2;                        // default 4x
     std::vector<float> tmp, tmp2;          // ping-pong scratch for mid rates
+    HalfBand2x<HbTaps71> down0;
+    HalfBand2x<HbTaps47> down1;
+    HalfBand2x<HbTaps35> down2;
 
     void setStages (int s) { stages = std::clamp (s, 1, 3); }
     int  factor() const { return 1 << stages; }
 
     void prepare (int maxBlock)
     {
-        up0.init(); down0.init();
-        up1.init(); down1.init();
-        up2.init(); down2.init();
+        s0.init(); down0.init();
+        s1.init(); down1.init();
+        s2.init(); down2.init();
         tmp.assign  ((size_t) maxBlock * 8u + 8u, 0.0f);
         tmp2.assign ((size_t) maxBlock * 8u + 8u, 0.0f);
     }
     void reset()
     {
-        up0.reset(); down0.reset();
-        up1.reset(); down1.reset();
-        up2.reset(); down2.reset();
+        s0.reset(); down0.reset();
+        s1.reset(); down1.reset();
+        s2.reset(); down2.reset();
     }
 
     // in[n] -> out[n * factor()]; `out` must hold n * factor() floats and
@@ -176,9 +179,9 @@ struct Oversampler
         for (int i = 0; i < n; ++i)
         {
             double e, o;
-            if (stage == 0)      up0.up (in[i], e, o);
-            else if (stage == 1) up1.up (in[i], e, o);
-            else                 up2.up (in[i], e, o);
+            if (stage == 0)      s0.up (in[i], e, o);
+            else if (stage == 1) s1.up (in[i], e, o);
+            else                 s2.up (in[i], e, o);
             out[2 * i] = (float) e; out[2 * i + 1] = (float) o;
         }
     }
