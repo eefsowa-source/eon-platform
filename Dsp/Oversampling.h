@@ -65,7 +65,7 @@ struct HbTaps35
         -2.6899266591e-04,  1.7121717578e-05 };
 };
 
-// One 2x stage. The same even-tap array drives both directions.
+// One 2x stage. Each instance owns delay history for one processing direction.
 template <typename Taps>
 struct HalfBand2x
 {
@@ -128,9 +128,9 @@ struct HalfBand2x
 // strongest filter (lowest rate). Upsample applies 0->N, downsample N->0.
 struct Oversampler
 {
-    HalfBand2x<HbTaps71> s0;
-    HalfBand2x<HbTaps47> s1;
-    HalfBand2x<HbTaps35> s2;
+    HalfBand2x<HbTaps71> up0, down0;
+    HalfBand2x<HbTaps47> up1, down1;
+    HalfBand2x<HbTaps35> up2, down2;
     int stages = 2;                        // default 4x
     std::vector<float> tmp, tmp2;          // ping-pong scratch for mid rates
 
@@ -139,11 +139,18 @@ struct Oversampler
 
     void prepare (int maxBlock)
     {
-        s0.init(); s1.init(); s2.init();
+        up0.init(); down0.init();
+        up1.init(); down1.init();
+        up2.init(); down2.init();
         tmp.assign  ((size_t) maxBlock * 8u + 8u, 0.0f);
         tmp2.assign ((size_t) maxBlock * 8u + 8u, 0.0f);
     }
-    void reset() { s0.reset(); s1.reset(); s2.reset(); }
+    void reset()
+    {
+        up0.reset(); down0.reset();
+        up1.reset(); down1.reset();
+        up2.reset(); down2.reset();
+    }
 
     // in[n] -> out[n * factor()]; `out` must hold n * factor() floats and
     // must NOT alias `in`.
@@ -169,9 +176,9 @@ struct Oversampler
         for (int i = 0; i < n; ++i)
         {
             double e, o;
-            if (stage == 0)      s0.up (in[i], e, o);
-            else if (stage == 1) s1.up (in[i], e, o);
-            else                 s2.up (in[i], e, o);
+            if (stage == 0)      up0.up (in[i], e, o);
+            else if (stage == 1) up1.up (in[i], e, o);
+            else                 up2.up (in[i], e, o);
             out[2 * i] = (float) e; out[2 * i + 1] = (float) o;
         }
     }
@@ -182,7 +189,7 @@ struct Oversampler
         if (stages == 1)
         {
             for (int i = 0; i < n; ++i)
-                out[i] = (float) s0.down (in[2 * i], in[2 * i + 1]);
+                out[i] = (float) down0.down (in[2 * i], in[2 * i + 1]);
             return;
         }
         // downsample highest stage first: stage (stages-1) ... stage 0
@@ -196,9 +203,9 @@ struct Oversampler
     {
         for (int i = 0; i < n; ++i)
         {
-            const double y = stage == 0 ? s0.down (in[2 * i], in[2 * i + 1])
-                           : stage == 1 ? s1.down (in[2 * i], in[2 * i + 1])
-                                        : s2.down (in[2 * i], in[2 * i + 1]);
+            const double y = stage == 0 ? down0.down (in[2 * i], in[2 * i + 1])
+                           : stage == 1 ? down1.down (in[2 * i], in[2 * i + 1])
+                                        : down2.down (in[2 * i], in[2 * i + 1]);
             out[i] = (float) y;
         }
     }
