@@ -233,15 +233,9 @@ struct WdfDiodePair : WdfPort
         const double logA = std::log (absA);
         const double logR = std::log (R);
         const double logIs = std::log (Is);
-        // Keep both Is*exp(q) and R*Is*exp(q) representable inside the bracket.
-        const double qMaxCurrent = logMaxDouble - logIs;
-        const double qMaxScaledCurrent = logMaxDouble - logR - logIs;
-        const double qMax = std::min (qMaxCurrent, qMaxScaledCurrent);
-        if (! (qMax > 0.0) || ! std::isfinite (qMax))
-        {
-            vPrev = 0.0;
-            return -aIn;
-        }
+        // The residual only represents R*i, so bound q from its representable
+        // scaled current. Keep a one-thermal-voltage minimum bracket for large R*Is.
+        const double qMax = std::max (1.0, logMaxDouble - logR - logIs);
 
         // Four log-current e-folds above the load current give the upper end
         // a genuine positive residual when representable.
@@ -328,9 +322,20 @@ struct WdfDiodePair : WdfPort
         else
         {
             const double logRatio = logA - std::log (2.0) - logR - logIs;
-            const double qGuess = logRatio > 20.0 ? logRatio + std::log (2.0)
-                                : (logRatio < -20.0 ? std::exp (logRatio)
-                                                   : std::asinh (std::exp (logRatio)));
+            double qGuess = logRatio > 20.0 ? logRatio + std::log (2.0)
+                           : (logRatio < -20.0 ? std::exp (logRatio)
+                                              : std::asinh (std::exp (logRatio)));
+            const double aOverVt = absA / Vt;
+            if (logRatio > 20.0 && std::isfinite (aOverVt) && aOverVt <= 1024.0)
+            {
+                // Solve the large-|q| asymptotic equation Vt*q + R*Is*exp(q) = |a|
+                // with W, giving a useful start when the diode voltage approaches |a|.
+                const double logArgument = logR + logIs - std::log (Vt) + aOverVt;
+                const double refinedGuess = aOverVt - lambertW0log (logArgument);
+                if (std::isfinite (refinedGuess) && refinedGuess >= 0.0
+                    && refinedGuess <= aOverVt)
+                    qGuess = refinedGuess;
+            }
             const double rawGuess = Vt * qGuess;
             initialVoltage = std::copysign (std::isfinite (rawGuess)
                                            ? std::min (bound, rawGuess) : bound, aIn);

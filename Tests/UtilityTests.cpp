@@ -202,6 +202,30 @@ EON_TEST_CASE("diode pair voltage residual remains valid at tiny positive resist
     }
 }
 
+EON_TEST_CASE("diode pair brackets high drive using scaled current at tiny resistance")
+{
+    eon::WdfDiodePair diodePair;
+    for (const double resistance : {1e-300, std::numeric_limits<double>::denorm_min()})
+    {
+        diodePair.R = resistance;
+        diodePair.reset();
+        diodePair.incident(20.0);
+        const double reflected = diodePair.emitted();
+        const double voltage = diodePair.vPrev;
+        const double q = voltage / diodePair.Vt;
+        const double scaledCurrent = std::abs(q) < 20.0
+            ? resistance * 2.0 * diodePair.Is * std::sinh(q)
+            : std::copysign(std::exp(std::log(resistance) + std::log(diodePair.Is)
+                                     + std::abs(q)), q);
+        const double scaledResidual = (voltage - 20.0) + scaledCurrent;
+
+        EON_CHECK(reportsSolveSuccess(diodePair));
+        EON_CHECK(reflected > 0.0);
+        EON_CHECK(voltage > 0.0 && voltage <= 20.0);
+        EON_CHECK_NEAR(scaledResidual, 0.0, 1e-12);
+    }
+}
+
 EON_TEST_CASE("diode pair tiny signals retain their small-signal response")
 {
     eon::WdfDiodePair diodePair;
