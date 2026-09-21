@@ -68,20 +68,38 @@ struct TriodeStage
 
     void reset()
     {
+        const int processingIterations = iterations;
+        iterations = 16;
         VpPrev = 150.f;
         cathodeVk = 0.0;
         lastIp = 0.f;
-        // Quiescent point. With a self-bias cathode the operating point is
-        // itself signal-dependent: iterate plate-solve <-> Vk = Ip*Rk until
-        // they agree (same fixed-point seeding as the Tube comp stage).
-        const int n = (cathodeRk > 0.f && cathodePole > 0.0) ? 8 : 1;
-        for (int i = 0; i < n; ++i)
+
+        // Reset can spend more work than the per-sample solver to find a
+        // consistent DC operating point without changing the processing budget.
+        const bool selfBiased = cathodeRk > 0.f && cathodePole > 0.0;
+        double Vk = 0.0;
+        if (selfBiased)
         {
-            Vq = solveVp (biasVg, (float) cathodeVk);
-            cathodeVk = (double) lastIp * cathodeRk;
+            constexpr int maxFixedPointIterations = 32;
+            constexpr double cathodeTolerance = 1e-7;
+            for (int i = 0; i < maxFixedPointIterations; ++i)
+            {
+                Vq = solveVp (biasVg, (float) Vk);
+                VpPrev = Vq;
+
+                const double nextVk = (double) lastIp * cathodeRk;
+                const double difference = nextVk - Vk;
+                Vk = nextVk;
+                if (std::abs (difference) <= cathodeTolerance)
+                    break;
+            }
         }
+
+        cathodeVk = Vk;
+        Vq = solveVp (biasVg, (float) cathodeVk);
         outScale = 1.f / std::max (40.f, Bplus - Vq);
         VpPrev = Vq;
+        iterations = processingIterations;
     }
 
     inline float korenIp (float Vg, float Vp, float* dIp_dVp = nullptr) const
@@ -116,8 +134,8 @@ struct TriodeStage
             const float f  = (Bplus - Vp) / Rload - Ip;
             const float df = -1.f / Rload - dIp;   // strictly negative -> safe
             Vp = std::clamp (Vp - f / df, 0.f, Bplus);
-            lastIp = Ip;
         }
+        lastIp = korenIp (Vg - Vk, Vp - Vk);
         return Vp;
     }
 

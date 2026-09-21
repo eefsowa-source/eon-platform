@@ -1,10 +1,72 @@
 #include "Dsp/Adaa.h"
 #include "Dsp/Stages.h"
+#include "Dsp/Triode.h"
 #include "Tests/TestHarness.h"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <numbers>
+
+EON_TEST_CASE("Triode grounded-cathode reset starts at its zero-input operating point")
+{
+    eon::TriodeStage stage;
+    stage.iterations = 2;
+    stage.reset();
+
+    EON_CHECK(stage.iterations == 2);
+    EON_CHECK_NEAR(stage.VpPrev, stage.Vq, 0.0f);
+    const float expected_out_scale = 1.0f / std::max(40.0f, stage.Bplus - stage.Vq);
+    EON_CHECK_NEAR(stage.outScale, expected_out_scale, 0.0f);
+    const float reset_last_ip = stage.lastIp;
+    const float reset_plate_ip = stage.korenIp(stage.biasVg, stage.Vq);
+    const float output = stage.process(0.0f);
+    const float process_plate_ip = stage.korenIp(stage.biasVg, stage.VpPrev);
+    // A 1e-5 normalized bound leaves ample room for float Newton rounding.
+    EON_CHECK(std::abs(output) < 1e-5f);
+    EON_CHECK_NEAR(stage.lastIp, process_plate_ip, 1e-8f);
+
+    const double plate_residual = (stage.Bplus - stage.Vq) / stage.Rload
+                                - reset_plate_ip;
+    EON_CHECK_NEAR(reset_last_ip, reset_plate_ip, 1e-8f);
+    EON_CHECK_NEAR(plate_residual, 0.0, 1e-8);
+}
+
+EON_TEST_CASE("Triode self-bias reset stays at its zero-input operating point")
+{
+    eon::TriodeStage stage;
+    stage.iterations = 2;
+    stage.setCathode(1500.0f, 25e-6f, 48000.0 * 32.0);
+    stage.reset();
+
+    EON_CHECK(stage.iterations == 2);
+    EON_CHECK_NEAR(stage.VpPrev, stage.Vq, 0.0f);
+    const float expected_out_scale = 1.0f / std::max(40.0f, stage.Bplus - stage.Vq);
+    EON_CHECK_NEAR(stage.outScale, expected_out_scale, 0.0f);
+    const double reset_cathode_vk = stage.cathodeVk;
+    const float reset_last_ip = stage.lastIp;
+    const float reset_plate_ip = stage.korenIp(
+        stage.biasVg - static_cast<float>(reset_cathode_vk),
+        stage.Vq - static_cast<float>(reset_cathode_vk));
+    const float process_vk = static_cast<float>(reset_cathode_vk);
+    const float immediate_output = stage.process(0.0f);
+    const float immediate_last_ip = stage.lastIp;
+    const float immediate_plate_ip = stage.korenIp(
+        stage.biasVg - process_vk, stage.VpPrev - process_vk);
+    float maximum_output = std::abs(immediate_output);
+    for (int sample = 0; sample < 500000; ++sample)
+        maximum_output = std::max(maximum_output, std::abs(stage.process(0.0f)));
+
+    // Repeated float state updates stay within this 1e-4 normalized bound.
+    EON_CHECK(maximum_output < 1e-4f);
+    EON_CHECK(std::abs(immediate_output) < 1e-5f);
+    EON_CHECK_NEAR(immediate_last_ip, immediate_plate_ip, 1e-8f);
+    const double plate_residual = (stage.Bplus - stage.Vq) / stage.Rload
+                                - reset_plate_ip;
+    EON_CHECK_NEAR(reset_last_ip, reset_plate_ip, 1e-8f);
+    EON_CHECK_NEAR(plate_residual, 0.0, 1e-8);
+    EON_CHECK_NEAR(reset_cathode_vk, reset_last_ip * stage.cathodeRk, 1e-3);
+}
 
 EON_TEST_CASE("DC blocker prepare keeps its cutoff in hertz across rates")
 {
