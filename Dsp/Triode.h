@@ -66,35 +66,85 @@ struct TriodeStage
             ? std::exp (-1.0 / ((double) rkOhms * ckFarads * rateHz)) : 0.0;
     }
 
-    float solveOperatingPoint (float Vk)
-    {
-        const int savedIterations = iterations;
-        iterations = 16;
-        const float vp = solveVp (biasVg, Vk);
-        iterations = savedIterations;
-        VpPrev = vp;
-        return vp;
-    }
-
     void reset()
     {
+        const int processingIterations = iterations;
+        iterations = 16;
         VpPrev = 150.f;
         cathodeVk = 0.0;
         lastIp = 0.f;
-        for (int i = 0; i < 32; ++i)
+
+        // Reset can spend more work than the per-sample solver to find a
+        // consistent DC operating point without changing the processing budget.
+        const bool selfBiased = cathodeRk > 0.f && cathodePole > 0.0;
+        double Vk = 0.0;
+        if (selfBiased)
         {
-            Vq = solveOperatingPoint ((float) cathodeVk);
-            const double nextVk = cathodeRk > 0.f ? (double) lastIp * cathodeRk : 0.0;
-            if (std::abs (nextVk - cathodeVk) < 1.0e-9)
+            constexpr int maxBisectionIterations = 48;
+            constexpr double cathodeTolerance = 1e-5;
+            const auto residualAt = [this](double candidateVk)
             {
-                cathodeVk = nextVk;
-                break;
+                // Give every residual evaluation the same plate-solver seed;
+                // the final selected point is solved again below.
+                VpPrev = 150.f;
+                solveVp (biasVg, (float) candidateVk);
+                return (double) lastIp * cathodeRk - candidateVk;
+            };
+
+            double lowerVk = 0.0;
+            double upperVk = std::max (0.0, (double) Bplus);
+            double lowerResidual = residualAt (lowerVk);
+            double upperResidual = residualAt (upperVk);
+            double selectedVk = std::abs (lowerResidual) <= std::abs (upperResidual)
+                ? lowerVk : upperVk;
+            double selectedResidual = std::min (std::abs (lowerResidual),
+                                                std::abs (upperResidual));
+
+            const bool bracketed = (lowerResidual <= 0.0 && upperResidual >= 0.0)
+                                || (lowerResidual >= 0.0 && upperResidual <= 0.0);
+            if (bracketed && selectedResidual > cathodeTolerance)
+            {
+                for (int i = 0; i < maxBisectionIterations; ++i)
+                {
+                    const double midpoint = 0.5 * (lowerVk + upperVk);
+                    if (midpoint == lowerVk || midpoint == upperVk)
+                        break;
+
+                    const double midpointResidual = residualAt (midpoint);
+                    if (std::abs (midpointResidual) < selectedResidual)
+                    {
+                        selectedVk = midpoint;
+                        selectedResidual = std::abs (midpointResidual);
+                    }
+                    if (selectedResidual <= cathodeTolerance)
+                        break;
+
+                    if ((lowerResidual <= 0.0 && midpointResidual <= 0.0)
+                        || (lowerResidual >= 0.0 && midpointResidual >= 0.0))
+                    {
+                        lowerVk = midpoint;
+                        lowerResidual = midpointResidual;
+                    }
+                    else
+                    {
+                        upperVk = midpoint;
+                        upperResidual = midpointResidual;
+                    }
+                }
             }
-            cathodeVk = nextVk;
+            // If the physical interval does not bracket a root, keep the
+            // endpoint with the smaller residual instead of treating an
+            // unbracketed iteration as converged. At the iteration cap,
+            // selectedVk retains the lowest residual sampled so far.
+            Vk = selectedVk;
         }
-        Vq = solveOperatingPoint ((float) cathodeVk);
+
+        cathodeVk = Vk;
+        VpPrev = 150.f;
+        Vq = solveVp (biasVg, (float) cathodeVk);
         outScale = 1.f / std::max (40.f, Bplus - Vq);
         VpPrev = Vq;
+        iterations = processingIterations;
     }
 
     inline float korenIp (float Vg, float Vp, float* dIp_dVp = nullptr) const

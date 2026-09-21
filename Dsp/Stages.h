@@ -13,18 +13,10 @@ struct DCBlocker
 {
     double x1 = 0.0, y1 = 0.0;
     double R = 0.9997;
-
-    void prepare (double sampleRate, double cutoffHz = 18.0)
+    void prepare (double sampleRate, double cutoffHz = 18.0) noexcept
     {
-        if (! std::isfinite (sampleRate) || sampleRate <= 0.0 ||
-            ! std::isfinite (cutoffHz) || cutoffHz < 0.0)
-        {
-            R = 0.0;
-            return;
-        }
         R = std::exp (-2.0 * std::numbers::pi * cutoffHz / sampleRate);
     }
-
     void reset() { x1 = y1 = 0.0; }
     inline float process (float x)
     {

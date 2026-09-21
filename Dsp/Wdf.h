@@ -1,6 +1,7 @@
 #pragma once
 #include <cmath>
 #include <algorithm>
+#include <limits>
 #include "Solvers.h"
 
 namespace eon {
@@ -53,7 +54,7 @@ struct WdfCapacitor : WdfPort
     void setSampleRate (double fs) { R = 1.0 / (2.0 * C * fs); }
     void reset() override { state = voltageState = 0.0; }
     double emitted() const override { return state; }      // b[n] = a[n-1]
-    void incident (double a) override
+    void   incident (double a) override
     {
         voltageState = 0.5 * (a + state);
         state = a;
@@ -98,8 +99,8 @@ struct WdfISourceRes : WdfPort
     double aIn = 0.0;
     explicit WdfISourceRes (double rs) { R = rs; }
     double emitted() const override { return aIn - 2.0 * R * Is; }
-    void incident (double a) override { aIn = a; }
-    void reset() override { aIn = 0.0; }
+    void   incident (double a) override { aIn = a; }
+    void   reset() override { aIn = 0.0; }
 };
 
 // ------------------------------- adaptors -----------------------------------
@@ -185,7 +186,7 @@ struct WdfDiode : WdfPort
 };
 
 // Antiparallel diode pair (clipper staple) as root.
-//   i(v) = 2*Is*sinh(v/Vt) = (a - v)/R   -> Newton on v, then b = 2v - a.
+//   i(v) = 2*Is*sinh(v/Vt) = (a - v)/R   -> safeguarded solve, then b = 2v - a.
 struct WdfDiodePair : WdfPort
 {
     double Is = 2.52e-9;
@@ -193,32 +194,213 @@ struct WdfDiodePair : WdfPort
     int    iterations = 8;
     double aIn = 0.0;
     mutable double vPrev = 0.0;              // warm start for the Newton loop
-    void   incident (double a) override { aIn = a; }
+    mutable bool solveSucceeded = false;
+    void   incident (double a) override { aIn = a; solveSucceeded = false; }
+    void   reset() override { aIn = vPrev = 0.0; solveSucceeded = false; }
     double emitted() const override
     {
-        const double resistance = std::max (R, 1.0e-12);
-        const double bound = std::max (std::abs (aIn), 1.0e-12);
-        const auto current = [this] (double v)
+        solveSucceeded = false;
+        if (! std::isfinite (aIn))
         {
-            const double q = std::clamp (v / Vt, -40.0, 40.0);
-            return 2.0 * Is * std::sinh (q);
-        };
-        const auto residual = [this, &current, resistance] (double v)
+            vPrev = 0.0;
+            return 0.0;
+        }
+        constexpr double logMaxDouble = 709.782712893383973096;
+        constexpr double logMinSubnormal = -744.440071921381218089;
+        const double maxDouble = std::numeric_limits<double>::max();
+        if (! std::isfinite (R) || ! (R > 0.0)
+            || ! std::isfinite (Is) || ! (Is > 0.0)
+            || ! std::isfinite (Vt) || ! (Vt > 0.0))
         {
-            return current (v) - (aIn - v) / resistance;
-        };
-        const auto derivative = [this, resistance] (double v)
+            vPrev = 0.0;
+            return -aIn;
+        }
+
+        if (iterations <= 0)
         {
-            const double q = std::clamp (v / Vt, -40.0, 40.0);
-            return (2.0 * Is / Vt) * std::cosh (q) + 1.0 / resistance;
+            if (! std::isfinite (vPrev)) vPrev = 0.0;
+            return vPrev - (aIn - vPrev);
+        }
+
+        if (aIn == 0.0)
+        {
+            vPrev = 0.0;
+            solveSucceeded = true;
+            return 0.0;
+        }
+
+        const double absA = std::abs (aIn);
+        const double logA = std::log (absA);
+        const double logR = std::log (R);
+        const double logIs = std::log (Is);
+        // The residual only represents R*i, so bound q from its representable
+        // scaled current. Keep a one-thermal-voltage minimum bracket for large R*Is.
+        const double qMax = std::max (1.0, logMaxDouble - logR - logIs);
+
+        // Four log-current e-folds above the load current give the upper end
+        // a genuine positive residual when representable.
+        const double qNeeded = logA - logR - logIs + 4.0;
+        const double qBound = std::min (qMax, std::max (1.0, qNeeded));
+        const double rawVoltageBound = Vt * qBound;
+        const double voltageBound = std::isfinite (rawVoltageBound)
+                                  ? rawVoltageBound : maxDouble;
+        const double bound = std::min (absA, voltageBound);
+        if (! (bound > 0.0) || ! std::isfinite (bound))
+        {
+            vPrev = 0.0;
+            return -aIn;
+        }
+
+        const auto scaledDiodeCurrent = [logR, logIs, maxDouble](double q)
+        {
+            const double absQ = std::abs (q);
+            double logMagnitude;
+            double sign;
+            if (absQ < 20.0)
+            {
+                const double factor = 2.0 * std::sinh (q);
+                if (factor == 0.0) return 0.0;
+                logMagnitude = logR + logIs + std::log (std::abs (factor));
+                sign = factor;
+            }
+            else
+            {
+                // For large |q|, 2*sinh(q) is sign(q)*exp(|q|) to double precision.
+                logMagnitude = logR + logIs + absQ;
+                sign = q;
+            }
+
+            if (logMagnitude < logMinSubnormal) return std::copysign (0.0, sign);
+            if (logMagnitude >= logMaxDouble) return std::copysign (maxDouble, sign);
+            return std::copysign (std::exp (logMagnitude), sign);
         };
-        const double initial = std::isfinite (vPrev) ? vPrev : 0.0;
-        const double v = newtonScalar (residual, derivative, initial,
-                                       -bound, bound, 32, 1.0e-12);
+        const auto scaledDerivative = [this, logR, logIs](double q)
+        {
+            const double absQ = std::abs (q);
+            double logMagnitude;
+            if (absQ < 20.0)
+            {
+                const double factor = 2.0 * std::cosh (q);
+                logMagnitude = logR + logIs + std::log (factor) - std::log (Vt);
+            }
+            else
+            {
+                logMagnitude = logR + logIs + absQ - std::log (Vt);
+            }
+
+            if (logMagnitude < logMinSubnormal) return 0.0;
+            if (logMagnitude >= logMaxDouble) return std::numeric_limits<double>::infinity();
+            return std::exp (logMagnitude);
+        };
+        const auto residual = [this, &scaledDiodeCurrent](double v)
+        {
+            return (v - aIn) + scaledDiodeCurrent (v / Vt);
+        };
+        const auto derivative = [this, &scaledDerivative](double v)
+        {
+            return 1.0 + scaledDerivative (v / Vt);
+        };
+
+        double lo = -bound, hi = bound;
+        double fLo = residual (lo);
+        const double fHi = residual (hi);
+        if (! (fLo <= 0.0 && fHi >= 0.0))
+        {
+            vPrev = 0.0;
+            return -aIn;
+        }
+
+        double initialVoltage;
+        if (absA <= Vt)
+        {
+            const double logSlope = std::log (2.0) + logR + logIs - std::log (Vt);
+            const double slope = logSlope >= logMaxDouble
+                               ? std::numeric_limits<double>::infinity()
+                               : (logSlope < logMinSubnormal ? 0.0 : std::exp (logSlope));
+            initialVoltage = aIn / (1.0 + slope);
+        }
+        else
+        {
+            const double logRatio = logA - std::log (2.0) - logR - logIs;
+            double qGuess = logRatio > 20.0 ? logRatio + std::log (2.0)
+                           : (logRatio < -20.0 ? std::exp (logRatio)
+                                              : std::asinh (std::exp (logRatio)));
+            const double aOverVt = absA / Vt;
+            if (logRatio > 20.0 && std::isfinite (aOverVt) && aOverVt <= 1024.0)
+            {
+                // Solve the large-|q| asymptotic equation Vt*q + R*Is*exp(q) = |a|
+                // with W, giving a useful start when the diode voltage approaches |a|.
+                const double logArgument = logR + logIs - std::log (Vt) + aOverVt;
+                const double refinedGuess = aOverVt - lambertW0log (logArgument);
+                if (std::isfinite (refinedGuess) && refinedGuess >= 0.0
+                    && refinedGuess <= aOverVt)
+                    qGuess = refinedGuess;
+            }
+            const double rawGuess = Vt * qGuess;
+            initialVoltage = std::copysign (std::isfinite (rawGuess)
+                                           ? std::min (bound, rawGuess) : bound, aIn);
+        }
+        initialVoltage = std::clamp (initialVoltage, lo, hi);
+        double v = initialVoltage;
+        if (std::isfinite (vPrev) && vPrev != 0.0
+            && std::signbit (vPrev) == std::signbit (aIn)
+            && vPrev >= lo && vPrev <= hi)
+        {
+            const double candidateResidual = residual (initialVoltage);
+            const double warmResidual = residual (vPrev);
+            if (std::isfinite (warmResidual)
+                && (! std::isfinite (candidateResidual)
+                    || std::abs (warmResidual) < std::abs (candidateResidual)))
+                v = vPrev;
+        }
+
+        const double residualScale = std::max (absA, std::abs (v));
+        const double residualTolerance = std::max (
+            64.0 * std::numeric_limits<double>::epsilon() * residualScale,
+            std::numeric_limits<double>::denorm_min());
+
+        for (int i = 0; i < iterations; ++i)
+        {
+            const double f = residual (v);
+            if (std::isfinite (f) && std::abs (f) <= residualTolerance)
+            {
+                solveSucceeded = true;
+                break;
+            }
+            if (! std::isfinite (f))
+            {
+                if (f < 0.0) { lo = v; fLo = f; }
+                else          { hi = v; }
+                v = 0.5 * lo + 0.5 * hi;
+                continue;
+            }
+
+            if ((f < 0.0) == (fLo < 0.0)) { lo = v; fLo = f; }
+            else                           { hi = v; }
+
+            const double df = derivative (v);
+            double next = std::isfinite (df) && df > 0.0 ? v - f / df : v;
+            if (! std::isfinite (next) || next <= lo || next >= hi)
+                next = 0.5 * lo + 0.5 * hi;
+            const double voltageScale = std::max ({std::abs (v), std::abs (next),
+                                                   std::abs (initialVoltage)});
+            const double voltageTolerance = std::max (
+                8.0 * std::numeric_limits<double>::epsilon() * voltageScale,
+                std::numeric_limits<double>::denorm_min());
+            if (std::abs (next - v) <= voltageTolerance)
+            {
+                v = next;
+                solveSucceeded = true;
+                break;
+            }
+            v = next;
+        }
+
+        v = std::clamp (v, -bound, bound);
+        if (! std::isfinite (v)) v = 0.0;
         vPrev = v;
-        return 2.0 * v - aIn;
+        return v - (aIn - v);
     }
-    void reset() override { aIn = vPrev = 0.0; }
 };
 
 } // namespace eon

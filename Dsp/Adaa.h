@@ -1,5 +1,6 @@
 #pragma once
 #include <cmath>
+#include <limits>
 
 namespace eon {
 
@@ -57,9 +58,31 @@ struct ADAA2
         if (std::abs (dx02) < eps)
         {
             if (std::abs (dx01) < eps)
-                y = f (x0);
+            {
+                y = f ((static_cast<double> (x0) + x1 + x2) / 3.0);
+            }
             else
-                y = 2.0 * (f1 (x0) * dx01 - F2x0 + F2x1) / (dx01 * dx01);
+            {
+                const double a = x0;
+                const double b = x1;
+                const double da = a - b;
+                const double scale = std::fmax (1.0,
+                                                std::fmax (std::abs (a), std::abs (b)));
+                const double middle_eps = std::sqrt (std::numeric_limits<float>::epsilon ()) * scale;
+
+                if (std::abs (da) <= middle_eps)
+                {
+                    // The quotient expands as f(a) + (b-a)f'(a)/3 + O((b-a)^2).
+                    // The centroid keeps the linear term; at this scale its
+                    // second-order error is at float precision while the quotient
+                    // still loses precision through subtraction of O(da) terms.
+                    y = f (a + (b - a) / 3.0);
+                }
+                else
+                {
+                    y = 2.0 * (f1 (a) * da - F2x0 + F2x1) / (da * da);
+                }
+            }
         }
         else
         {
