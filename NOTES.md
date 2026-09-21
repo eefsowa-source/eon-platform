@@ -43,9 +43,10 @@ projects. Include the repository root and include headers as `Dsp/<name>.h`.
   point and solver behavior can change results.
 - **WdfDiodePair:** `R`, `Is`, and `Vt` must each be finite and greater than
   zero for a valid solve. `iterations` is the total Newton/refinement budget;
-  zero or less returns the existing warm-start voltage (`vPrev`) without
-  solving. Check `solveSucceeded` after `emitted()` to distinguish a converged
-  solve from a finite fallback result. Invalid parameters and other fallback
+  zero or less preserves the existing warm-start voltage (`vPrev`) and returns
+  its reflected wave, `2 * vPrev - aIn`, without solving. Check
+  `solveSucceeded` after `emitted()` to tell whether the solve converged or
+  returned a finite fallback result. Invalid parameters and other fallback
   paths leave it false.
 - **WdfCapacitor:** `voltage()` reports the voltage saved at the last
   scattering operation. It is a held state value and is not recomputed by the
