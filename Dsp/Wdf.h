@@ -1,6 +1,7 @@
 #pragma once
 #include <cmath>
 #include <algorithm>
+#include <limits>
 #include "Solvers.h"
 
 namespace eon {
@@ -185,7 +186,7 @@ struct WdfDiode : WdfPort
 };
 
 // Antiparallel diode pair (clipper staple) as root.
-//   i(v) = 2*Is*sinh(v/Vt) = (a - v)/R   -> Newton on v, then b = 2v - a.
+//   i(v) = 2*Is*sinh(v/Vt) = (a - v)/R   -> safeguarded solve, then b = 2v - a.
 struct WdfDiodePair : WdfPort
 {
     double Is = 2.52e-9;
@@ -197,44 +198,126 @@ struct WdfDiodePair : WdfPort
     void   reset() override { aIn = vPrev = 0.0; }
     double emitted() const override
     {
+        if (! std::isfinite (aIn))
+        {
+            vPrev = 0.0;
+            return 0.0;
+        }
         if (aIn == 0.0)
         {
             vPrev = 0.0;
             return 0.0;
         }
 
-        const double bound = std::abs (aIn);
-        double lo = -bound, hi = bound;
-        constexpr double maxSinhArgument = 700.0;
-        const auto residual = [this, maxSinhArgument](double v)
+        const double maxDouble = std::numeric_limits<double>::max();
+        constexpr double logMaxDouble = 709.782712893383973096;
+        if (! std::isfinite (R) || ! (R > 0.0)
+            || ! std::isfinite (Is) || ! (Is > 0.0)
+            || ! std::isfinite (Vt) || ! (Vt > 0.0))
         {
-            const double x = std::clamp (v / Vt, -maxSinhArgument, maxSinhArgument);
-            return 2.0 * Is * std::sinh (x) - (aIn - v) / R;
+            vPrev = 0.0;
+            return -aIn;
+        }
+
+        const double absA = std::abs (aIn);
+        const double logIs = std::log (Is);
+        const double logDriveCurrent = std::log (absA) - std::log (R);
+        if (! std::isfinite (logDriveCurrent) || logDriveCurrent >= logMaxDouble)
+        {
+            vPrev = 0.0;
+            return -aIn;
+        }
+
+        const double driveCurrent = std::exp (logDriveCurrent);
+        // At qMax the asymptotic diode current reaches DBL_MAX. Aim four
+        // e-folds above the load current when possible, then cap to qMax.
+        const double qMax = logMaxDouble - logIs;
+        if (! (qMax > 0.0) || ! std::isfinite (qMax))
+        {
+            vPrev = 0.0;
+            return -aIn;
+        }
+
+        const double qNeeded = logDriveCurrent - logIs + 4.0;
+        const double qBound = std::min (qMax, std::max (1.0, qNeeded));
+        const double rawVoltageBound = Vt * qBound;
+        const double voltageBound = std::isfinite (rawVoltageBound)
+                                  ? rawVoltageBound : maxDouble;
+        const double bound = std::min (absA, voltageBound);
+        if (! (bound > 0.0) || ! std::isfinite (bound))
+        {
+            vPrev = 0.0;
+            return -aIn;
+        }
+
+        const auto diodeCurrent = [this, logIs, maxDouble](double q)
+        {
+            const double absQ = std::abs (q);
+            if (absQ < 20.0)
+            {
+                const double factor = 2.0 * std::sinh (q);
+                if (factor == 0.0) return 0.0;
+                if (Is <= maxDouble / std::abs (factor)) return Is * factor;
+                return std::copysign (maxDouble, factor);
+            }
+
+            // For large |q|, 2*sinh(q) is sign(q)*exp(|q|) to double precision.
+            const double logCurrent = logIs + absQ;
+            if (logCurrent >= logMaxDouble) return std::copysign (maxDouble, q);
+            return std::copysign (std::exp (logCurrent), q);
         };
-        const auto derivative = [this, maxSinhArgument](double v)
+        const auto residual = [this, &diodeCurrent](double v)
         {
-            const double x = std::clamp (v / Vt, -maxSinhArgument, maxSinhArgument);
-            return (2.0 * Is / Vt) * std::cosh (x) + 1.0 / R;
+            return diodeCurrent (v / Vt) - (aIn - v) / R;
+        };
+        const auto derivative = [this, &diodeCurrent, maxDouble](double v)
+        {
+            const double q = v / Vt;
+            double diodeDerivative;
+            if (std::abs (q) < 20.0)
+            {
+                const double factor = 2.0 * std::cosh (q) / Vt;
+                diodeDerivative = std::isfinite (factor) && Is <= maxDouble / factor
+                                ? Is * factor : std::numeric_limits<double>::infinity();
+            }
+            else
+            {
+                diodeDerivative = std::abs (diodeCurrent (q)) / Vt;
+            }
+            return diodeDerivative + 1.0 / R;
         };
 
+        double lo = -bound, hi = bound;
         double fLo = residual (lo);
+        const double fHi = residual (hi);
+        if (! (fLo <= 0.0 && fHi >= 0.0))
+        {
+            vPrev = 0.0;
+            return -aIn;
+        }
+
         double v = std::isfinite (vPrev) ? std::clamp (vPrev, lo, hi) : 0.0;
         if (v <= lo || v >= hi) v = 0.0;
-        const double tolerance = 1e-12 * std::max (std::abs (aIn / R), 1e-12);
+        const double tolerance = 1e-12 * std::max (driveCurrent, 1e-12);
 
         for (int i = 0; i < std::max (iterations, 1); ++i)
         {
             const double f = residual (v);
             if (std::abs (f) <= tolerance) break;
+            if (! std::isfinite (f))
+            {
+                if (f < 0.0) { lo = v; fLo = f; }
+                else          { hi = v; }
+                v = 0.5 * lo + 0.5 * hi;
+                continue;
+            }
 
             if ((f < 0.0) == (fLo < 0.0)) { lo = v; fLo = f; }
-            else                           hi = v;
+            else                           { hi = v; }
 
             const double df = derivative (v);
             double next = std::isfinite (df) && df > 0.0 ? v - f / df : v;
-            const double scaledVoltage = v / Vt;
-            if (std::abs (scaledVoltage) >= maxSinhArgument
-                || ! std::isfinite (next) || next <= lo || next >= hi)
+            if (! std::isfinite (next) || next <= lo || next >= hi)
                 next = 0.5 * lo + 0.5 * hi;
             if (next == v) break;
             v = next;
@@ -246,8 +329,15 @@ struct WdfDiodePair : WdfPort
         {
             const double f = residual (v);
             if (std::abs (f) <= tolerance) break;
+            if (! std::isfinite (f))
+            {
+                if (f < 0.0) { lo = v; fLo = f; }
+                else          { hi = v; }
+                v = 0.5 * lo + 0.5 * hi;
+                continue;
+            }
             if ((f < 0.0) == (fLo < 0.0)) { lo = v; fLo = f; }
-            else                           hi = v;
+            else                           { hi = v; }
             const double next = 0.5 * lo + 0.5 * hi;
             if (next == v) break;
             v = next;

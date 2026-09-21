@@ -94,3 +94,47 @@ EON_TEST_CASE("diode pair remains finite under large and changing drives")
     diodePair.incident(-1.0);
     EON_CHECK_NEAR(diodePair.emitted(), -positive, 1e-10);
 }
+
+EON_TEST_CASE("diode pair keeps extreme finite drives inside the diode voltage range")
+{
+    eon::WdfDiodePair diodePair;
+    diodePair.R = 4700.0;
+    const double maxDiodeVoltage = diodePair.Vt
+                                 * (std::log(std::numeric_limits<double>::max())
+                                    - std::log(diodePair.Is));
+
+    for (const double input : {1e100, -1e100, 1e300, -1e300})
+    {
+        diodePair.incident(input);
+        const double reflected = diodePair.emitted();
+        EON_CHECK(std::isfinite(reflected));
+        EON_CHECK(input > 0.0 ? reflected < 0.0 : reflected > 0.0);
+        EON_CHECK(std::abs(diodePair.vPrev) <= maxDiodeVoltage);
+        EON_CHECK_NEAR(reflected / input, -1.0, 1e-12);
+    }
+
+    diodePair.incident(1.0);
+    EON_CHECK(std::isfinite(diodePair.emitted()));
+    EON_CHECK(diodePair.emitted() < 0.0);
+    diodePair.reset();
+    EON_CHECK_NEAR(diodePair.vPrev, 0.0, 0.0);
+    diodePair.incident(0.0);
+    EON_CHECK_NEAR(diodePair.emitted(), 0.0, 0.0);
+}
+
+EON_TEST_CASE("diode pair invalid parameters and nonfinite inputs stay finite")
+{
+    eon::WdfDiodePair diodePair;
+    diodePair.R = 0.0;
+    diodePair.incident(1e100);
+    EON_CHECK(std::isfinite(diodePair.emitted()));
+
+    diodePair.R = 4700.0;
+    diodePair.Is = std::numeric_limits<double>::quiet_NaN();
+    diodePair.incident(-1e100);
+    EON_CHECK(std::isfinite(diodePair.emitted()));
+
+    diodePair.Is = 2.52e-9;
+    diodePair.incident(std::numeric_limits<double>::infinity());
+    EON_CHECK(std::isfinite(diodePair.emitted()));
+}
