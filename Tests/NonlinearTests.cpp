@@ -8,6 +8,48 @@
 #include <limits>
 #include <numbers>
 
+static void checkTriodeSelfBiasResetStability(float cathodeRk)
+{
+    eon::TriodeStage stage;
+    stage.iterations = 2;
+    stage.setCathode(cathodeRk, 25e-6f, 48000.0 * 32.0);
+    stage.reset();
+
+    EON_CHECK(stage.iterations == 2);
+    EON_CHECK_NEAR(stage.VpPrev, stage.Vq, 0.0f);
+    const float expected_out_scale = 1.0f / std::max(40.0f, stage.Bplus - stage.Vq);
+    EON_CHECK_NEAR(stage.outScale, expected_out_scale, 0.0f);
+    const double reset_cathode_vk = stage.cathodeVk;
+    const float reset_last_ip = stage.lastIp;
+    const float reset_vq = stage.Vq;
+    const float reset_plate_ip = stage.korenIp(
+        stage.biasVg - static_cast<float>(reset_cathode_vk),
+        reset_vq - static_cast<float>(reset_cathode_vk));
+    const double cathode_residual = reset_last_ip * cathodeRk - reset_cathode_vk;
+    const double plate_residual = (stage.Bplus - reset_vq) / stage.Rload
+                                - reset_plate_ip;
+    const float immediate_output = stage.process(0.0f);
+    float maximum_output = std::abs(immediate_output);
+    for (int sample = 0; sample < 500000; ++sample)
+        maximum_output = std::max(maximum_output, std::abs(stage.process(0.0f)));
+
+    EON_CHECK_NEAR(cathode_residual, 0.0, 1e-3);
+    EON_CHECK_NEAR(reset_last_ip, reset_plate_ip, 1e-8f);
+    EON_CHECK_NEAR(plate_residual, 0.0, 1e-8);
+    EON_CHECK(std::abs(immediate_output) < 1e-4f);
+    EON_CHECK(maximum_output < 1e-4f);
+}
+
+EON_TEST_CASE("Triode 2700-ohm self-bias reset converges and remains stable")
+{
+    checkTriodeSelfBiasResetStability(2700.0f);
+}
+
+EON_TEST_CASE("Triode 3510-ohm self-bias reset converges and remains stable")
+{
+    checkTriodeSelfBiasResetStability(3510.0f);
+}
+
 EON_TEST_CASE("Triode grounded-cathode reset starts at its zero-input operating point")
 {
     eon::TriodeStage stage;

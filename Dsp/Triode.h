@@ -80,22 +80,67 @@ struct TriodeStage
         double Vk = 0.0;
         if (selfBiased)
         {
-            constexpr int maxFixedPointIterations = 32;
-            constexpr double cathodeTolerance = 1e-7;
-            for (int i = 0; i < maxFixedPointIterations; ++i)
+            constexpr int maxBisectionIterations = 48;
+            constexpr double cathodeTolerance = 1e-5;
+            const auto residualAt = [this](double candidateVk)
             {
-                Vq = solveVp (biasVg, (float) Vk);
-                VpPrev = Vq;
+                // Give every residual evaluation the same plate-solver seed;
+                // the final selected point is solved again below.
+                VpPrev = 150.f;
+                solveVp (biasVg, (float) candidateVk);
+                return (double) lastIp * cathodeRk - candidateVk;
+            };
 
-                const double nextVk = (double) lastIp * cathodeRk;
-                const double difference = nextVk - Vk;
-                Vk = nextVk;
-                if (std::abs (difference) <= cathodeTolerance)
-                    break;
+            double lowerVk = 0.0;
+            double upperVk = std::max (0.0, (double) Bplus);
+            double lowerResidual = residualAt (lowerVk);
+            double upperResidual = residualAt (upperVk);
+            double selectedVk = std::abs (lowerResidual) <= std::abs (upperResidual)
+                ? lowerVk : upperVk;
+            double selectedResidual = std::min (std::abs (lowerResidual),
+                                                std::abs (upperResidual));
+
+            const bool bracketed = (lowerResidual <= 0.0 && upperResidual >= 0.0)
+                                || (lowerResidual >= 0.0 && upperResidual <= 0.0);
+            if (bracketed && selectedResidual > cathodeTolerance)
+            {
+                for (int i = 0; i < maxBisectionIterations; ++i)
+                {
+                    const double midpoint = 0.5 * (lowerVk + upperVk);
+                    if (midpoint == lowerVk || midpoint == upperVk)
+                        break;
+
+                    const double midpointResidual = residualAt (midpoint);
+                    if (std::abs (midpointResidual) < selectedResidual)
+                    {
+                        selectedVk = midpoint;
+                        selectedResidual = std::abs (midpointResidual);
+                    }
+                    if (selectedResidual <= cathodeTolerance)
+                        break;
+
+                    if ((lowerResidual <= 0.0 && midpointResidual <= 0.0)
+                        || (lowerResidual >= 0.0 && midpointResidual >= 0.0))
+                    {
+                        lowerVk = midpoint;
+                        lowerResidual = midpointResidual;
+                    }
+                    else
+                    {
+                        upperVk = midpoint;
+                        upperResidual = midpointResidual;
+                    }
+                }
             }
+            // If the physical interval does not bracket a root, keep the
+            // endpoint with the smaller residual instead of treating an
+            // unbracketed iteration as converged. At the iteration cap,
+            // selectedVk retains the lowest residual sampled so far.
+            Vk = selectedVk;
         }
 
         cathodeVk = Vk;
+        VpPrev = 150.f;
         Vq = solveVp (biasVg, (float) cathodeVk);
         outScale = 1.f / std::max (40.f, Bplus - Vq);
         VpPrev = Vq;
