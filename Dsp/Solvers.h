@@ -2,6 +2,7 @@
 #include <cmath>
 #include <algorithm>
 #include <cstddef>
+#include <limits>
 #include <type_traits>
 
 namespace eon {
@@ -22,15 +23,50 @@ namespace eon {
 // W0(x) for x > 0 via w + ln(w) = ln(x). ~5 iterations to 1e-14.
 inline double lambertW0log (double logX)
 {
-    // initial guess: asymptotic L - ln L for large logs, exp for small
-    double w = logX > 1.0 ? logX - std::log (std::max (logX, 1e-10)) : std::exp (logX);
-    if (! (w > 0.0)) w = 1e-10;
+    if (std::isnan (logX)) return logX;
+    if (logX == -std::numeric_limits<double>::infinity()) return 0.0;
+    if (logX == std::numeric_limits<double>::infinity()) return logX;
+
+    // log(denorm_min) for IEEE-754 binary64, kept constant to avoid a
+    // function-local runtime initializer on the audio thread.
+    constexpr double smallestLog = -744.440071921381218089;
+    if (logX < smallestLog) return 0.0;
+
+    // Initial guess: asymptotic L - ln L for large logs, exp for small.
+    double w = logX > 1.0 ? logX - std::log (logX) : std::exp (logX);
+    if (! (w > 0.0) || ! std::isfinite (w)) return 0.0;
+
     for (int i = 0; i < 40; ++i)
     {
-        const double f  = w + std::log (w) - logX;
-        const double dw = f / (1.0 + 1.0 / w);      // Newton on g(w)=w+ln w
-        w -= dw;
-        if (std::abs (dw) < 1e-14 * std::max (1.0, std::abs (w))) break;
+        const double f = w + std::log (w) - logX;
+        if (f == 0.0) break;
+
+        // The reciprocal derivative w/(w+1) avoids 1/w overflowing for
+        // subnormal initial guesses. Backtracking keeps Newton in its domain.
+        const double step = f * (w / (w + 1.0));
+        double candidate = w - step;
+        if (! (candidate > 0.0) || ! std::isfinite (candidate)
+            || std::abs (candidate + std::log (candidate) - logX) >= std::abs (f))
+        {
+            double scale = 0.5;
+            candidate = w;
+            for (int backtrack = 0; backtrack < 64; ++backtrack)
+            {
+                const double damped = w - scale * step;
+                if (damped > 0.0 && std::isfinite (damped)
+                    && std::abs (damped + std::log (damped) - logX) < std::abs (f))
+                {
+                    candidate = damped;
+                    break;
+                }
+                scale *= 0.5;
+            }
+        }
+
+        if (candidate == w) break;
+        const double delta = std::abs (candidate - w);
+        w = candidate;
+        if (delta < 1e-14 * std::max (1.0, std::abs (w))) break;
     }
     return w;
 }

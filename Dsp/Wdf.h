@@ -48,13 +48,17 @@ struct WdfResistor : WdfPort
 
 struct WdfCapacitor : WdfPort
 {
-    double C, state = 0.0;
+    double C, state = 0.0, voltageState = 0.0;
     explicit WdfCapacitor (double c) : C (c) {}
     void setSampleRate (double fs) { R = 1.0 / (2.0 * C * fs); }
-    void reset() override { state = 0.0; }
+    void reset() override { state = voltageState = 0.0; }
     double emitted() const override { return state; }      // b[n] = a[n-1]
-    void   incident (double a) override { state = a; }
-    double voltage() const { return state; }               // v = (a+b)/2 -> see note
+    void   incident (double a) override
+    {
+        voltageState = 0.5 * (a + state);
+        state = a;
+    }
+    double voltage() const { return voltageState; }
 };
 
 struct WdfInductor : WdfPort
@@ -91,11 +95,11 @@ struct WdfVSourceIdeal : WdfPort
 struct WdfISourceRes : WdfPort
 {
     double Is = 0.0;
+    double aIn = 0.0;
     explicit WdfISourceRes (double rs) { R = rs; }
-    double emitted() const override { return 0.0; }        // emits nothing upward…
-    void   incident (double) override {}
-    // (current sources usually appear via their Norton R in a parallel junction;
-    //  expose emitted() = 0 and drive through incident handling instead)
+    double emitted() const override { return aIn - 2.0 * R * Is; }
+    void   incident (double a) override { aIn = a; }
+    void   reset() override { aIn = 0.0; }
 };
 
 // ------------------------------- adaptors -----------------------------------
@@ -190,19 +194,69 @@ struct WdfDiodePair : WdfPort
     double aIn = 0.0;
     mutable double vPrev = 0.0;              // warm start for the Newton loop
     void   incident (double a) override { aIn = a; }
+    void   reset() override { aIn = vPrev = 0.0; }
     double emitted() const override
     {
-        double v = vPrev;
-        for (int i = 0; i < iterations; ++i)
+        if (aIn == 0.0)
         {
-            const double f  = 2.0 * Is * std::sinh (v / Vt) - (aIn - v) / R;
-            const double df = (2.0 * Is / Vt) * std::cosh (v / Vt) + 1.0 / R;
-            const double dv = f / df;
-            v -= dv;
-            if (std::abs (dv) < 1e-12) break;
+            vPrev = 0.0;
+            return 0.0;
         }
+
+        const double bound = std::abs (aIn);
+        double lo = -bound, hi = bound;
+        constexpr double maxSinhArgument = 700.0;
+        const auto residual = [this, maxSinhArgument](double v)
+        {
+            const double x = std::clamp (v / Vt, -maxSinhArgument, maxSinhArgument);
+            return 2.0 * Is * std::sinh (x) - (aIn - v) / R;
+        };
+        const auto derivative = [this, maxSinhArgument](double v)
+        {
+            const double x = std::clamp (v / Vt, -maxSinhArgument, maxSinhArgument);
+            return (2.0 * Is / Vt) * std::cosh (x) + 1.0 / R;
+        };
+
+        double fLo = residual (lo);
+        double v = std::isfinite (vPrev) ? std::clamp (vPrev, lo, hi) : 0.0;
+        if (v <= lo || v >= hi) v = 0.0;
+        const double tolerance = 1e-12 * std::max (std::abs (aIn / R), 1e-12);
+
+        for (int i = 0; i < std::max (iterations, 1); ++i)
+        {
+            const double f = residual (v);
+            if (std::abs (f) <= tolerance) break;
+
+            if ((f < 0.0) == (fLo < 0.0)) { lo = v; fLo = f; }
+            else                           hi = v;
+
+            const double df = derivative (v);
+            double next = std::isfinite (df) && df > 0.0 ? v - f / df : v;
+            const double scaledVoltage = v / Vt;
+            if (std::abs (scaledVoltage) >= maxSinhArgument
+                || ! std::isfinite (next) || next <= lo || next >= hi)
+                next = 0.5 * lo + 0.5 * hi;
+            if (next == v) break;
+            v = next;
+        }
+
+        // Newton is fast near the root, while bisection guarantees progress
+        // when a large drive starts outside the unclamped sinh range.
+        for (int i = 0; i < 64; ++i)
+        {
+            const double f = residual (v);
+            if (std::abs (f) <= tolerance) break;
+            if ((f < 0.0) == (fLo < 0.0)) { lo = v; fLo = f; }
+            else                           hi = v;
+            const double next = 0.5 * lo + 0.5 * hi;
+            if (next == v) break;
+            v = next;
+        }
+
+        v = std::clamp (v, -bound, bound);
+        if (! std::isfinite (v)) v = 0.0;
         vPrev = v;
-        return 2.0 * v - aIn;
+        return v - (aIn - v);
     }
 };
 
