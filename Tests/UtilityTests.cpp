@@ -1,6 +1,7 @@
 #include "Dsp/Rng.h"
 #include "Dsp/Solvers.h"
 #include "Dsp/Wdf.h"
+#include "Dsp/Zdf.h"
 #include "Tests/TestHarness.h"
 
 #include <algorithm>
@@ -24,6 +25,15 @@ static bool reportsSolveSuccess(const Solver& solver)
     return false;
 }
 
+static double ladderFeedbackStateTerm(double G, const double states[4])
+{
+    const double stateSum = G * G * G * states[0]
+                          + G * G * states[1]
+                          + G * states[2]
+                          + states[3];
+    return (1.0 - G) * stateSum;
+}
+
 EON_TEST_CASE("utility suite smoke test")
 {
     eon::Rng first(1234);
@@ -31,6 +41,75 @@ EON_TEST_CASE("utility suite smoke test")
     EON_CHECK(first.nextU64() == second.nextU64());
     EON_CHECK_NEAR(first.next(), second.next(), 0.0);
     EON_CHECK_NEAR(0.1 + 0.2, 0.3, 1e-15);
+}
+
+EON_TEST_CASE("four-pole ladder solves tanh saturation inside feedback loop")
+{
+    eon::Ladder4 ladder;
+    ladder.setCutoff(12000.0, 48000.0);
+    ladder.setResonance(4.0);
+    ladder.reset();
+
+    constexpr double input = 2.0;
+    const double G = ladder.g / (1.0 + ladder.g);
+    const double G4 = G * G * G * G;
+    const double stateTerm = ladderFeedbackStateTerm(G, ladder.s);
+    const double output = ladder.process(input);
+    const double u = (output - stateTerm) / G4;
+    const double residual = u - std::tanh(input * ladder.drive
+                                        - ladder.k * (G4 * u + stateTerm));
+
+    EON_CHECK_NEAR(residual, 0.0, 1e-9);
+}
+
+EON_TEST_CASE("four-pole ladder feedback residual holds across stateful settings")
+{
+    constexpr double sampleRate = 48000.0;
+    const double cutoffs[] = {20.0, 1000.0, 12000.0, 23000.0};
+    const double resonances[] = {0.0, 2.0, 4.0};
+    const double drives[] = {-4.0, 4.0};
+    const double inputs[] = {-0.75, 0.2, 0.9, -0.4, 0.1};
+
+    for (const double cutoff : cutoffs)
+    {
+        for (const double resonance : resonances)
+        {
+            for (const double drive : drives)
+            {
+                eon::Ladder4 ladder;
+                ladder.setCutoff(cutoff, sampleRate);
+                ladder.setResonance(resonance);
+                ladder.drive = drive;
+                ladder.reset();
+
+                const double G = ladder.g / (1.0 + ladder.g);
+                const double G4 = G * G * G * G;
+                for (const double input : inputs)
+                {
+                    double preStates[4];
+                    for (int i = 0; i < 4; ++i)
+                        preStates[i] = ladder.s[i];
+                    const double stateTerm = ladderFeedbackStateTerm(G, preStates);
+                    const double output = ladder.process(input);
+                    const double u = (output - stateTerm) / G4;
+                    const double residual = u - std::tanh(input * ladder.drive
+                                                        - ladder.k * (G4 * u + stateTerm));
+                    const double conditioningTolerance = 64.0
+                        * std::numeric_limits<double>::epsilon()
+                        * (std::abs(output) + std::abs(stateTerm)) / G4;
+
+                    EON_CHECK(std::isfinite(output));
+                    EON_CHECK(std::abs(output) <= 2.0);
+                    EON_CHECK(std::abs(residual) <= std::max(1e-9, conditioningTolerance));
+                    for (const double state : ladder.s)
+                    {
+                        EON_CHECK(std::isfinite(state));
+                        EON_CHECK(std::abs(state) <= 4.0);
+                    }
+                }
+            }
+        }
+    }
 }
 
 EON_TEST_CASE("Lambert W log solver stays in range from tiny to huge inputs")
