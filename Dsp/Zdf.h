@@ -81,23 +81,41 @@ struct Ladder4
         const double G4 = G * G * G * G;
         const double S  = G * G * G * s[0] + G * G * s[1] + G * s[2] + s[3];
 
-        const double stateTerm = (1.0 - G) * S;
-        double u0 = (x * drive - k * stateTerm) / (1.0 + k * G4);
+        double u0;
         if (saturate)
         {
-            for (int i = 0; i < 8; ++i)
+            const double stateTerm = (1.0 - G) * S;
+            const double drivenInput = x * drive;
+            double low = -1.0;
+            double high = 1.0;
+            double u = std::clamp ((drivenInput - k * stateTerm) / (1.0 + k * G4),
+                                   low, high);
+
+            for (int iteration = 0; iteration < 40; ++iteration)
             {
-                const double arg = x * drive - k * (G4 * u0 + stateTerm);
-                const double t = std::tanh (arg);
-                const double f = u0 - t;
-                const double df = 1.0 + k * G4 * (1.0 - t * t);
-                const double next = u0 - f / df;
-                if (! std::isfinite (next))
+                const double argument = drivenInput - k * (G4 * u + stateTerm);
+                const double saturated = std::tanh (argument);
+                const double residual = u - saturated;
+                if (std::abs (residual) <= 1e-14)
                     break;
-                u0 = next;
-                if (std::abs (f) < 1.0e-12)
-                    break;
+
+                if (residual < 0.0)
+                    low = u;
+                else
+                    high = u;
+
+                const double derivative = 1.0 + k * G4 * (1.0 - saturated * saturated);
+                double next = u - residual / derivative;
+                if (!(next > low && next < high))
+                    next = 0.5 * (low + high);
+                u = next;
             }
+            u0 = u;
+        }
+        else
+        {
+            // Preserve the original unsaturated linear path exactly.
+            u0 = (x * drive - k * (1.0 - G) * S) / (1.0 + k * G4);
         }
 
         double u = u0;
