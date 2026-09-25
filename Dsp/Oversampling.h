@@ -2,6 +2,7 @@
 #include <cmath>
 #include <vector>
 #include <cstddef>
+#include <cassert>
 #include <algorithm>
 
 namespace eon {
@@ -132,6 +133,7 @@ struct Oversampler
     HalfBand2x<HbTaps47> s1;
     HalfBand2x<HbTaps35> s2;
     int stages = 2;                        // default 4x
+    int capacity = 0;                      // largest host-rate block accepted
     std::vector<float> tmp, tmp2;          // ping-pong scratch for mid rates
     HalfBand2x<HbTaps71> down0;
     HalfBand2x<HbTaps47> down1;
@@ -145,6 +147,7 @@ struct Oversampler
         s0.init(); down0.init();
         s1.init(); down1.init();
         s2.init(); down2.init();
+        capacity = std::max (0, maxBlock);
         tmp.assign  ((size_t) maxBlock * 8u + 8u, 0.0f);
         tmp2.assign ((size_t) maxBlock * 8u + 8u, 0.0f);
     }
@@ -159,6 +162,7 @@ struct Oversampler
     // must NOT alias `in`.
     void up (const float* in, int n, float* out)
     {
+        assert (n <= capacity && "Oversampler::prepare(maxBlock) was not called for this block size");
         if (stages == 1)
         {
             upStage (in, n, out, 0);
@@ -189,6 +193,7 @@ struct Oversampler
     // in[n * factor()] -> out[n]
     void down (const float* in, float* out, int n)
     {
+        assert (n <= capacity && "Oversampler::prepare(maxBlock) was not called for this block size");
         if (stages == 1)
         {
             for (int i = 0; i < n; ++i)

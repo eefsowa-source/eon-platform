@@ -112,7 +112,7 @@ inline double newtonScalar (F&& f, DF&& df, double x0, double lo, double hi,
         }
 
         double xn = (d != 0.0) ? x - fx / d : x;
-        if (! std::isfinite (xn) || xn <= lo || xn >= hi || (bracketed && (xn <= lo || xn >= hi)))
+        if (! std::isfinite (xn) || xn <= lo || xn >= hi)
             xn = 0.5 * (lo + hi);                       // bisection fallback
         if (std::abs (xn - x) < tol * std::max (1.0, std::abs (xn))) return xn;
         x = xn;

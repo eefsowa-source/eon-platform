@@ -8,6 +8,7 @@ projects. Include the repository root and include headers as `Dsp/<name>.h`.
 | `Dsp/Adaa.h` | Double-precision ADAA1/ADAA2 state and antiderivatives; `TanhSat`, `SoftClip`, and `SoftClipSat` |
 | `Dsp/Measure.h` | Measurement and analysis helpers |
 | `Dsp/Oversampling.h` | Stateful 2x/4x/8x half-band polyphase oversampler |
+| `Dsp/Rate.h` | Rate compensation for per-sample one-pole constants (`rescalePole`, `rescaleNoise`) |
 | `Dsp/Rng.h` | Deterministic per-instance PRNG |
 | `Dsp/RtGuard.h` | Scoped denormal handling helper |
 | `Dsp/Solvers.h` | Numerical solver helpers, including Lambert W |
@@ -19,6 +20,13 @@ projects. Include the repository root and include headers as `Dsp/<name>.h`.
 
 ## Runtime contracts
 
+- **Rate independence:** `InductorResonator`, `AnalogAir`, `SagThermal`,
+  `ClassAStage`, and `JilesAtherton` store physical time constants and must be
+  given `prepare(rateHz)` with the *processing* rate — the oversampled rate
+  when the stage runs inside an oversampling loop. Without it they replay the
+  48 kHz authoring constants per sample, so their poles (and the noise floor)
+  scale with the oversampling factor. `Dsp/Rate.h` holds the transform;
+  `Tests/RateIndependenceTests.cpp` is the gate.
 - **DCBlocker:** Call `prepare(sampleRate, cutoffHz)` before processing. Both
   values must be finite and strictly positive; the default cutoff is 18 Hz.
   Call `reset()` when starting a new signal/state epoch.

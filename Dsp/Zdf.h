@@ -20,6 +20,7 @@ struct OnePoleTPT
     double g = 0.0, s = 0.0;
     void setCutoff (double fc, double fs)
     {
+        if (! (fs > 0.0) || ! (fc > 0.0)) { g = 0.0; return; }
         g = std::tan (M_PI * std::min (fc, 0.49 * fs) / fs);
     }
     void reset() { s = 0.0; }
@@ -40,6 +41,7 @@ struct SvfTPT
     double g = 0.0, R = 1.0, s1 = 0.0, s2 = 0.0;
     void setParams (double fc, double q, double fs)
     {
+        if (! (fs > 0.0) || ! (fc > 0.0)) { g = 0.0; R = 1.0; return; }
         g = std::tan (M_PI * std::min (fc, 0.49 * fs) / fs);
         R = 1.0 / (2.0 * std::max (0.05, q));
     }
@@ -70,6 +72,7 @@ struct Ladder4
 
     void setCutoff (double fc, double fs)
     {
+        if (! (fs > 0.0) || ! (fc > 0.0)) { g = 0.0; return; }
         g = std::tan (M_PI * std::min (fc, 0.49 * fs) / fs);
     }
     void setResonance (double r) { k = std::clamp (r, 0.0, 4.0); }

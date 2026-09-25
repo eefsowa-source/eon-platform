@@ -2,6 +2,7 @@
 #include <cmath>
 #include <algorithm>
 #include "Rng.h"
+#include "Rate.h"
 
 namespace eon {
 
@@ -33,8 +34,15 @@ struct JilesAtherton
 
     Rng rng;
 
+    // Barkhausen-noise amplitude, rate-compensated in prepare().
+    double noiseScale = 1.0;
+
     void setTolerance (float t) { tolerance = t; }
     void reset() { Mirr = M = H = 0.0; }
+
+    // rateHz = processing rate — keeps the domain-wall noise density constant
+    // when the oversampling factor changes.
+    void prepare (double rateHz) { noiseScale = detail::rescaleNoise (1.0, rateHz); }
 
     inline double langevin (double He) const
     {
@@ -65,7 +73,7 @@ struct JilesAtherton
         H     = Hn;
 
         const double B = std::tanh (M * 0.92 + Hn * 0.08);
-        const double activity = std::min (0.001, std::abs (dMirr_dH) * 1e-5);
+        const double activity = std::min (0.001, std::abs (dMirr_dH) * 1e-5) * noiseScale;
         const double bark = (rng.next() - 0.5) * activity;
         return (float) (B + bark);
     }
