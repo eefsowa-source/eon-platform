@@ -67,7 +67,9 @@ endif()
 
 include(CTest)
 
-if(BUILD_TESTING)
+# Consumers pulling this via FetchContent should not build the platform's own
+# test suite — only standalone checkouts run it.
+if(BUILD_TESTING AND CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
     function(eon_add_test_target target)
         target_link_libraries(${target} PRIVATE
             eon_dsp eon_dsp_warnings eon_dsp_strict_fp eon_dsp_sanitizers)
