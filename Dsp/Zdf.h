@@ -1,5 +1,6 @@
 #pragma once
 #include <cmath>
+#include <numbers>
 #include <algorithm>
 
 namespace eon {
@@ -21,7 +22,7 @@ struct OnePoleTPT
     void setCutoff (double fc, double fs)
     {
         if (! (fs > 0.0) || ! (fc > 0.0)) { g = 0.0; return; }
-        g = std::tan (M_PI * std::min (fc, 0.49 * fs) / fs);
+        g = std::tan (std::numbers::pi * std::min (fc, 0.49 * fs) / fs);
     }
     void reset() { s = 0.0; }
     inline double process (double x)
@@ -42,7 +43,7 @@ struct SvfTPT
     void setParams (double fc, double q, double fs)
     {
         if (! (fs > 0.0) || ! (fc > 0.0)) { g = 0.0; R = 1.0; return; }
-        g = std::tan (M_PI * std::min (fc, 0.49 * fs) / fs);
+        g = std::tan (std::numbers::pi * std::min (fc, 0.49 * fs) / fs);
         R = 1.0 / (2.0 * std::max (0.05, q));
     }
     void reset() { s1 = s2 = 0.0; }
@@ -73,7 +74,7 @@ struct Ladder4
     void setCutoff (double fc, double fs)
     {
         if (! (fs > 0.0) || ! (fc > 0.0)) { g = 0.0; return; }
-        g = std::tan (M_PI * std::min (fc, 0.49 * fs) / fs);
+        g = std::tan (std::numbers::pi * std::min (fc, 0.49 * fs) / fs);
     }
     void setResonance (double r) { k = std::clamp (r, 0.0, 4.0); }
     void reset() { s[0] = s[1] = s[2] = s[3] = 0.0; }

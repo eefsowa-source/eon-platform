@@ -16,6 +16,7 @@
 #include "Dsp/Transformer.h"
 
 #include <cmath>
+#include <numbers>
 #include <vector>
 
 namespace {
@@ -74,7 +75,7 @@ EON_TEST_CASE("rescalePole keeps the pole frequency across rates")
 {
     constexpr double authored = 0.9;                 // 48 kHz constant
     const double referenceHz = -std::log (authored) * eon::detail::kAuthoringRate
-                             / (2.0 * M_PI);
+                             / (2.0 * std::numbers::pi);
 
     EON_CHECK_NEAR (eon::detail::rescalePole (authored, eon::detail::kAuthoringRate),
                     authored, 0.0);
@@ -83,7 +84,7 @@ EON_TEST_CASE("rescalePole keeps the pole frequency across rates")
     {
         const double pole = eon::detail::rescalePole (authored, rate);
         EON_CHECK (pole > authored && pole < 1.0);
-        const double recoveredHz = -std::log (pole) * rate / (2.0 * M_PI);
+        const double recoveredHz = -std::log (pole) * rate / (2.0 * std::numbers::pi);
         EON_CHECK_NEAR (recoveredHz, referenceHz, 1e-9 * referenceHz);
     }
 }
@@ -207,7 +208,7 @@ EON_TEST_CASE("analog air keeps its in-band noise power across rates")
         air.prepare (rate);
         air.reset();
 
-        const double pole = std::exp (-2.0 * M_PI * 1000.0 / rate);
+        const double pole = std::exp (-2.0 * std::numbers::pi * 1000.0 / rate);
         double lp = 0.0, sumSq = 0.0;
         const long long total = static_cast<long long> (0.5 * rate);
         for (long long i = 0; i < total; ++i)
@@ -242,7 +243,7 @@ EON_TEST_CASE("DC blocker keeps its 20 Hz gain across rates")
         blocker.prepare (rate, 18.0);
         blocker.reset();
 
-        const double w = 2.0 * M_PI * 20.0 / rate;
+        const double w = 2.0 * std::numbers::pi * 20.0 / rate;
         double peak = 0.0;
         const long long total = static_cast<long long> (2.0 * rate);
         const long long settle = total / 2;

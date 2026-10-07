@@ -1,5 +1,6 @@
 #pragma once
 #include <cmath>
+#include <numbers>
 #include <vector>
 #include <algorithm>
 
@@ -15,7 +16,7 @@ namespace measure {
 // for non-bin-aligned frequencies). Phase-locked reference — robust for THD.
 inline double binMag (const float* buf, size_t N, double freq, double sr)
 {
-    const double w = 2.0 * M_PI * freq / sr;
+    const double w = 2.0 * std::numbers::pi * freq / sr;
     double re = 0.0, im = 0.0;
     for (size_t i = 0; i < N; ++i)
     {
@@ -70,7 +71,7 @@ template <typename F>
 inline void renderSine (F&& proc, float* buf, size_t N, double freq,
                         double amp, double sr, int settle)
 {
-    const double w = 2.0 * M_PI * freq / sr;
+    const double w = 2.0 * std::numbers::pi * freq / sr;
     for (int i = 0; i < settle; ++i)
         proc ((float) (amp * std::sin (w * (double) i)));
     for (size_t i = 0; i < N; ++i)
