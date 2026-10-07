@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(eon_dsp LANGUAGES CXX)
+project(eon_platform LANGUAGES CXX)
 
 # ---------------------------------------------------------------------------
 # Build quality for a numerical DSP core.
