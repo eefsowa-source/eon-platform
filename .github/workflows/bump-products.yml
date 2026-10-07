@@ -1,0 +1,42 @@
+name: Bump platform pin in products
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  bump-products:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.PLATFORM_BUMP_TOKEN }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - name: Open a bump PR in every product repo that uses the pin
+        run: |
+          set -u
+          # Products without cmake/Platform.cmake are skipped automatically —
+          # a repo opts in simply by adding the pin file.
+          for repo in Tube-comp YinYeng ii76 Wavetable EEVE1073 EONisya Mini-EEF eon-audio-god; do
+            full="eefsowa-source/$repo"
+            sha=$(gh api "repos/$full/contents/cmake/Platform.cmake?ref=main" -q .sha 2>/dev/null) \
+              || { echo "$repo: no platform pin, skip"; continue; }
+            content=$(gh api "repos/$full/contents/cmake/Platform.cmake?ref=main" -q .content | tr -d '\n' | base64 -d)
+            new=$(printf '%s\n' "$content" | sed -E 's/set\(EON_PLATFORM_REF "[^"]+"\)/set(EON_PLATFORM_REF "'"$TAG"'")/')
+            [ "$content" = "$new" ] && { echo "$repo: already at $TAG, skip"; continue; }
+            branch="chore/platform-$TAG"
+            mainsha=$(gh api "repos/$full/git/ref/heads/main" -q .object.sha)
+            gh api -X POST "repos/$full/git/refs" -f ref="refs/heads/$branch" -f sha="$mainsha" >/dev/null 2>&1 \
+              || gh api -X PATCH "repos/$full/git/refs/heads/$branch" -f sha="$mainsha" -f force=true >/dev/null
+            gh api -X PUT "repos/$full/contents/cmake/Platform.cmake" \
+              -f message="chore: bump eon-platform to $TAG" \
+              -f content="$(printf '%s\n' "$new" | base64)" \
+              -f sha="$sha" -f branch="$branch" >/dev/null
+            gh pr create --repo "$full" --base main --head "$branch" \
+              --title "Bump eon-platform to $TAG" \
+              --body "Automated platform pin bump from eon-platform $TAG. This PR's CI validates the product against the new platform version — it is the downstream smoke gate." \
+              2>/dev/null || echo "$repo: PR already exists or failed to open"
+            echo "$repo: bump PR opened"
+          done
