@@ -486,9 +486,9 @@
 
 | # | 제목 | 우선순위 | 종류 | 노력 | 상태 |
 |---|------|---------|------|------|------|
-| 1 | License 추가 | CRITICAL | Setup | 5m | TODO |
-| 2 | README.md 작성 | CRITICAL | Docs | 2-3h | TODO |
-| 3 | .gitignore 정리 | MEDIUM | Setup | 30m | TODO |
+| 1 | License 추가 | CRITICAL | Setup | 5m | DONE |
+| 2 | README.md 작성 | CRITICAL | Docs | 2-3h | DONE |
+| 3 | .gitignore 정리 | MEDIUM | Setup | 30m | DONE |
 | 4 | WdfDiodePair tests | HIGH | Test | 2-3h | TODO |
 | 5 | TriodeStage tests | HIGH | Test | 2h | TODO |
 | 6 | Oversampler tests | HIGH | Test | 2-3h | TODO |
