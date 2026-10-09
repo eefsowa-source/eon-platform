@@ -47,14 +47,14 @@ def kernel(hE, N):
 def resp(h, th):
     return np.exp(-1j * np.outer(th, np.arange(len(h)))) @ h
 
-def evaluate(hE, N, wp=0.215 * np.pi, ws=np.pi - 0.215 * np.pi, npts=8192):
+def evaluate(hE, N, wp=0.43 * np.pi, ws=np.pi - 0.43 * np.pi, npts=8192):
     th = np.linspace(0, np.pi, npts)
     K = np.abs(resp(kernel(hE, N), th))
     pass_err_db = 20 * np.log10(np.abs(K[th <= wp] - 1.0).max() + 1e-300)
     stop_db = 20 * np.log10(K[th >= ws].max() + 1e-300)
     return pass_err_db, stop_db
 
-def design_ls(N, wp=0.215 * np.pi, ws=np.pi - 0.215 * np.pi,
+def design_ls(N, wp=0.43 * np.pi, ws=np.pi - 0.43 * np.pi,
               weight_stop=1.0):
     """Weighted LS half-band design via scipy's firls (analytic Toeplitz solve).
 
