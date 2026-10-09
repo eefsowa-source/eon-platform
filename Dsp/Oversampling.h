@@ -11,11 +11,12 @@ namespace eon {
 // ---------------------------------------------------------------------------
 // Pure-DSP half-band polyphase oversampler — no framework dependency, so the
 // same code serves JUCE plugins, iPlug2 projects and headless measurement
-// tools. Kaiser-windowed half-band FIRs, coefficients embedded:
+// tools. Least-squares half-band FIRs (tools/design_hb_ls.py, firls with
+// stopband weight 256, even-offset taps snapped to the half-band form):
 //
-//   stage 0 (fs <-> 2fs):  N=71  -> -113 dB stopband, flat to 0.43*pi
-//   stage 1 (2fs <-> 4fs): N=47  -> -102 dB
-//   stage 2 (4fs <-> 8fs): N=35  ->  -90 dB
+//   stage 0 (fs <-> 2fs):  N=71  -> -142 dB stopband, flat to 0.43*pi base rate
+//   stage 1 (2fs <-> 4fs): N=47  -> -144 dB
+//   stage 2 (4fs <-> 8fs): N=35  -> -143 dB
 //
 // The strongest filter sits at the lowest rate where aliasing would fold
 // straight back into the audio band. Polyphase decomposition (verified to
@@ -33,38 +34,38 @@ struct HbTaps71
 {
     static constexpr int p = 17;
     static constexpr double hE[36] = {
-        -1.2477987897e-06,  1.1227480081e-05, -4.2213195345e-05,  1.1705190499e-04,
-        -2.7257107958e-04,  5.6356400147e-04, -1.0666100923e-03,  1.8837546556e-03,
-        -3.1467476030e-03,  5.0238835479e-03, -7.7341787388e-03,  1.1579539945e-02,
-        -1.7020470787e-02,  2.4864705852e-02, -3.6794020275e-02,  5.7171141772e-02,
-        -1.0208649494e-01,  3.1694998446e-01,  3.1694998446e-01, -1.0208649494e-01,
-         5.7171141772e-02, -3.6794020275e-02,  2.4864705852e-02, -1.7020470787e-02,
-         1.1579539945e-02, -7.7341787388e-03,  5.0238835479e-03, -3.1467476030e-03,
-         1.8837546556e-03, -1.0666100923e-03,  5.6356400147e-04, -2.7257107958e-04,
-         1.1705190499e-04, -4.2213195345e-05,  1.1227480081e-05, -1.2477987897e-06 };
+        -1.1483905961e-06,  4.7898655531e-05, -4.3195919308e-04,  2.0664228571e-03,
+        -6.4428656365e-03,  1.4133078251e-02, -2.2164519998e-02,  2.3684255693e-02,
+        -1.3575486114e-02, -3.1911012327e-03,  1.1809037713e-02, -2.8725046277e-03,
+        -1.1006370024e-02,  2.1056825932e-03,  3.8484595725e-02, -7.3420478362e-02,
+         3.0256866279e-02,  2.6051860008e-01,  2.6051860008e-01,  3.0256866279e-02,
+        -7.3420478362e-02,  3.8484595725e-02,  2.1056825932e-03, -1.1006370024e-02,
+        -2.8725046277e-03,  1.1809037713e-02, -3.1911012327e-03, -1.3575486114e-02,
+         2.3684255693e-02, -2.2164519998e-02,  1.4133078251e-02, -6.4428656365e-03,
+         2.0664228571e-03, -4.3195919308e-04,  4.7898655531e-05, -1.1483905961e-06 };
 };
 
 struct HbTaps47
 {
     static constexpr int p = 11;
     static constexpr double hE[24] = {
-        -4.9151111759e-06,  6.5122378319e-05, -2.8715247150e-04,  8.7813478063e-04,
-        -2.1786964615e-03,  4.6960948225e-03, -9.1540676449e-03,  1.6629580781e-02,
-        -2.9012452245e-02,  5.0748369748e-02, -9.7845787349e-02,  3.1546742160e-01,
-         3.1546742160e-01, -9.7845787349e-02,  5.0748369748e-02, -2.9012452245e-02,
-         1.6629580781e-02, -9.1540676449e-03,  4.6960948225e-03, -2.1786964615e-03,
-         8.7813478063e-04, -2.8715247150e-04,  6.5122378319e-05, -4.9151111759e-06 };
+        -1.5384302407e-05,  1.3814941316e-04, -5.9157969766e-04,  1.5217947537e-03,
+        -2.3028907822e-03,  8.8129650092e-04,  5.3328364864e-03, -1.6027053906e-02,
+         2.3731180725e-02, -1.2326497099e-02, -4.5153134824e-02,  2.9481127658e-01,
+         2.9481127658e-01, -4.5153134824e-02, -1.2326497099e-02,  2.3731180725e-02,
+        -1.6027053906e-02,  5.3328364864e-03,  8.8129650092e-04, -2.3028907822e-03,
+         1.5217947537e-03, -5.9157969766e-04,  1.3814941316e-04, -1.5384302407e-05 };
 };
 
 struct HbTaps35
 {
     static constexpr int p = 8;
     static constexpr double hE[18] = {
-         1.7121717578e-05, -2.6899266591e-04,  1.2540227767e-03, -3.9265122295e-03,
-         9.8371917699e-03, -2.1471419812e-02,  4.3766261984e-02, -9.2881796171e-02,
-         3.1366794053e-01,  3.1366794053e-01, -9.2881796171e-02,  4.3766261984e-02,
-        -2.1471419812e-02,  9.8371917699e-03, -3.9265122295e-03,  1.2540227767e-03,
-        -2.6899266591e-04,  1.7121717578e-05 };
+        -4.0753183975e-06,  1.9788268892e-05,  2.4207103520e-05, -6.0474643151e-04,
+         3.2732322785e-03, -1.1544778726e-02,  3.2311802613e-02, -8.3494066869e-02,
+         3.1001863149e-01,  3.1001863149e-01, -8.3494066869e-02,  3.2311802613e-02,
+        -1.1544778726e-02,  3.2732322785e-03, -6.0474643151e-04,  2.4207103520e-05,
+         1.9788268892e-05, -4.0753183975e-06 };
 };
 
 // One 2x stage. Each instance owns delay history for one processing direction.
@@ -149,8 +150,8 @@ struct Oversampler
         s1.init(); down1.init();
         s2.init(); down2.init();
         capacity = std::max (0, maxBlock);
-        tmp.assign  ((size_t) maxBlock * 8u + 8u, 0.0f);
-        tmp2.assign ((size_t) maxBlock * 8u + 8u, 0.0f);
+        tmp.assign  ((size_t) capacity * 8u + 8u, 0.0f);
+        tmp2.assign ((size_t) capacity * 8u + 8u, 0.0f);
     }
     void reset()
     {
@@ -164,6 +165,7 @@ struct Oversampler
     void up (const float* in, int n, float* out)
     {
         assert (n <= capacity && "Oversampler::prepare(maxBlock) was not called for this block size");
+        n = std::clamp (n, 0, capacity);    // release builds: clamp instead of overrunning tmp/tmp2
         if (stages == 1)
         {
             upStage (in, n, out, 0);
@@ -195,6 +197,7 @@ struct Oversampler
     void down (const float* in, float* out, int n)
     {
         assert (n <= capacity && "Oversampler::prepare(maxBlock) was not called for this block size");
+        n = std::clamp (n, 0, capacity);
         if (stages == 1)
         {
             for (int i = 0; i < n; ++i)
