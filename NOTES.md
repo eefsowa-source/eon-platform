@@ -59,6 +59,13 @@ projects. Include the repository root and include headers as `Dsp/<name>.h`.
 - **WdfCapacitor:** `voltage()` reports the voltage saved at the last
   scattering operation. It is a held state value and is not recomputed by the
   getter.
+- **WdfDiode / WdfVSourceIdeal / WdfISourceRes:** `reset()` clears the stored
+  incident wave. `WdfDiode` returns `-a` (total reflection) when `R`, `Is`,
+  or `Vt` is invalid and 0 for non-finite input. `WdfISourceRes` evaluates
+  `b = a - 2R*Is` with the last incident wave it saw — exact at the root,
+  one sample late as a leaf.
+- **Rng:** instances sharing the default seed emit identical streams; call
+  `reseed()` per channel/stage that needs decorrelated noise.
 
 ## Build and test
 

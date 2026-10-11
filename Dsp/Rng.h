@@ -11,7 +11,11 @@ struct Rng
 {
     uint64_t s0 = 0x9E3779B97F4A7C15ull, s1 = 0xBF58476D1CE4E5B9ull;
 
-    explicit Rng (uint64_t seed = 0x243F6A8885A308D3ull)
+    explicit Rng (uint64_t seed = 0x243F6A8885A308D3ull) { reseed (seed); }
+
+    // Same seed -> identical streams. Reseed each channel/stage that needs
+    // decorrelated noise (e.g. stereo instances).
+    void reseed (uint64_t seed)
     {
         // splitmix64 to fill the state
         for (int i = 0; i < 2; ++i)

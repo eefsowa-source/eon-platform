@@ -24,7 +24,8 @@ inline double binMag (const float* buf, size_t N, double freq, double sr)
         re += (double) buf[i] * std::cos (w * (double) i);
         im -= (double) buf[i] * std::sin (w * (double) i);
     }
-    return std::sqrt (re * re + im * im) * (2.0 / (double) N);
+    // x2/N normalisation is for non-zero sinusoids; a DC bin reads 2x otherwise.
+    return std::sqrt (re * re + im * im) * ((freq == 0.0 ? 1.0 : 2.0) / (double) N);
 }
 
 // Harmonic amplitudes H1..maxH of a recorded sine response.

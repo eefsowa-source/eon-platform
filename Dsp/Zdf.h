@@ -36,7 +36,7 @@ struct OnePoleTPT
     }
 };
 
-// TPT state-variable filter: simultaneous lp / bp / hp / notch.
+// TPT state-variable filter: simultaneous lp / bp / hp (notch = lp + hp).
 // R = 1/(2Q) damping. Q = 0.5 is butterworth-ish.
 struct SvfTPT
 {

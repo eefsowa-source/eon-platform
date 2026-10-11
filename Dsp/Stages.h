@@ -21,6 +21,8 @@ struct DCBlocker
     double R = 0.9997;
     void prepare (double sampleRate, double cutoffHz = 18.0) noexcept
     {
+        if (! (sampleRate > 0.0) || ! (cutoffHz > 0.0))
+            return;                         // keep the previous (or default) R on bad input
         R = std::exp (-2.0 * std::numbers::pi * cutoffHz / sampleRate);
     }
     void reset() { x1 = y1 = 0.0; }
@@ -66,7 +68,7 @@ struct InductorResonator
     // is cached rather than evaluated per sample.
     inline void refresh()
     {
-        const double wd = std::min (1.0, (double) cachedFreq / 8000.0);
+        const double wd = std::clamp ((double) cachedFreq / 8000.0, 0.0, 1.0);
         const double q  = (double) cachedQ;
 
         const double pole1Orig = 0.80 - wd * 0.06;
@@ -94,7 +96,7 @@ struct InductorResonator
             refresh();
         }
 
-        const double wd   = std::min (1.0, (double) freqHz / 8000.0);
+        const double wd   = std::clamp ((double) freqHz / 8000.0, 0.0, 1.0);
         const double in   = (double) x * drive * tolerance;
         const double satD = 1.0 + 0.35 / (0.18 + wd);
         const double out  = std::tanh (in * satScale * satD);
@@ -163,9 +165,12 @@ struct SagThermal
         poleSag     = detail::rescalePole (0.9970,  rateHz);
         poleThermal = detail::rescalePole (0.99990, rateHz);
         poleDrift   = detail::rescalePole (0.99998, rateHz);
-        // The random walk's per-step variance must also be rate-compensated,
-        // otherwise the drift excursion grows as sqrt(rate) between updates.
-        driftStep = detail::rescaleNoise (4e-6, rateHz);
+        // drift is an *integrated* OU state: stationary variance goes as
+        // step^2/(1-pole^2), so the per-step size scales DOWN with the
+        // pole-derived factor (~1/sqrt(rate)) — not up like an output-injected
+        // white-noise source.
+        driftStep = 4e-6 * std::sqrt ((1.0 - poleDrift * poleDrift)
+                                      / (1.0 - 0.99998 * 0.99998));
     }
 
     inline void tick (double env)

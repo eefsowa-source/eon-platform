@@ -22,3 +22,4 @@ DartConfiguration.tcl
 *.swo
 *~
 .DS_Store
+__pycache__/

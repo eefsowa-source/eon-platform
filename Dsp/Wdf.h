@@ -91,9 +91,12 @@ struct WdfVSourceIdeal : WdfPort
     double aIn = 0.0;
     double emitted() const override { return 2.0 * Vs - aIn; }
     void   incident (double a) override { aIn = a; }
+    void   reset() override { aIn = 0.0; }
 };
 
-// Resistive current source — leaf. i = Is fixed -> b = a - 2R*Is.
+// Resistive current source. i = Is fixed -> b = a - 2R*Is, evaluated with the
+// incident wave it last saw: exact at the root (incident -> emitted order),
+// one sample late as a leaf.
 struct WdfISourceRes : WdfPort
 {
     double Is = 0.0;
@@ -179,8 +182,14 @@ struct WdfDiode : WdfPort
     double Vt = 25.85e-3;
     double aIn = 0.0;
     void   incident (double a) override { aIn = a; }
+    void   reset() override { aIn = 0.0; }
     double emitted() const override
     {
+        if (! std::isfinite (aIn)) return 0.0;
+        if (! std::isfinite (R) || ! (R > 0.0)
+            || ! std::isfinite (Is) || ! (Is > 0.0)
+            || ! std::isfinite (Vt) || ! (Vt > 0.0))
+            return -aIn;                        // total reflection: same fallback as WdfDiodePair
         const double logZ = std::log (R * Is / Vt) + (R * Is + aIn) / Vt;
         return aIn + 2.0 * R * Is - 2.0 * Vt * lambertW0log (logZ);
     }

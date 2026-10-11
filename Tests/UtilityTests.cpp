@@ -1,5 +1,6 @@
 #include "Dsp/Rng.h"
 #include "Dsp/Solvers.h"
+#include "Dsp/Triode.h"
 #include "Dsp/Wdf.h"
 #include "Dsp/Zdf.h"
 #include "Tests/TestHarness.h"
@@ -346,4 +347,22 @@ EON_TEST_CASE("diode pair iterations bound the total solve work")
     const double defaultBudgetOutput = diodePair.emitted();
     EON_CHECK(std::abs(defaultBudgetOutput - oneStepOutput) > 1e-10);
     EON_CHECK(reportsSolveSuccess(diodePair));
+}
+
+EON_TEST_CASE("korenIp analytic derivative matches central difference")
+{
+    eon::TriodeStage stage;
+    for (const float vg : { -3.0f, -1.5f, -0.2f, 0.5f })
+    {
+        for (const float vp : { 1.0f, 20.0f, 150.0f, 300.0f, 450.0f })
+        {
+            float analytic = 0.0f;
+            stage.korenIp (vg, vp, &analytic);
+            const float h = 1e-3f * std::max (1.0f, std::abs (vp));
+            const float central = (stage.korenIp (vg, vp + h) - stage.korenIp (vg, vp - h))
+                                / (2.0f * h);
+            EON_CHECK_NEAR (analytic, central,
+                            1e-4 * std::max (1.0, (double) std::abs (central)));
+        }
+    }
 }

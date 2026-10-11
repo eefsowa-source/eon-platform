@@ -40,6 +40,9 @@ struct ScopedDenormalsOff
     ~ScopedDenormalsOff() { _mm_setcsr (oldMxcsr); }
 #else
     ScopedDenormalsOff() {}
+    // shortcut: cl.exe MSVC defines neither __SSE__ nor __aarch64__ — silent
+    // no-op on MSVC x64 AND ARM64; add a _controlfp_s(_DN_FLUSH) path when an
+    // MSVC target ships (clang-cl/GCC define __SSE__ and are covered).
 #endif
     ScopedDenormalsOff (const ScopedDenormalsOff&) = delete;
     ScopedDenormalsOff& operator= (const ScopedDenormalsOff&) = delete;

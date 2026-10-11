@@ -19,6 +19,10 @@ namespace eon {
 //
 // Requires *exact* antiderivatives. When consecutive samples are too close,
 // fall back to midpoint evaluations (F2' = F1) instead of dividing by ~0.
+//
+// reset() zeroes the stored antiderivative values — callers must supply
+// antiderivatives normalised so F(0) = 0 (true for the bundled devices), or
+// the first output after reset is biased.
 // ---------------------------------------------------------------------------
 
 struct ADAA1

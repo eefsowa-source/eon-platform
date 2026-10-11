@@ -197,6 +197,25 @@ EON_TEST_CASE("PSU sag and thermal step response are rate independent")
     EON_CHECK (relativeSpread (thermalRuns) < 0.02);
 }
 
+EON_TEST_CASE("PSU drift step keeps stationary variance across rates")
+{
+    // drift is an integrated OU state: stationary variance goes as
+    // step^2/(1-pole^2). A step scaled like output-injected noise (~sqrt
+    // rate) makes the excursion grow ~8x between 48 kHz and 1.5 MHz — the
+    // wrong direction. The invariant step*sqrt((1-p0^2)/(1-p^2)) == authored
+    // step is exact, deterministic, and instant.
+    constexpr double authoredStep = 4e-6;
+    const double refPoleFactor = 1.0 - 0.99998 * 0.99998;
+    for (const double rate : { 48000.0, 96000.0, 384000.0, 768000.0, 1536000.0 })
+    {
+        eon::SagThermal stage;
+        stage.prepare (rate);
+        const double recovered = stage.driftStep
+            * std::sqrt (refPoleFactor / (1.0 - stage.poleDrift * stage.poleDrift));
+        EON_CHECK_NEAR (recovered, authoredStep, 1e-9 * authoredStep);
+    }
+}
+
 EON_TEST_CASE("analog air keeps its in-band noise power across rates")
 {
     // Total broadband RMS legitimately rises with rate (the noise is shaped and
