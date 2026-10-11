@@ -70,6 +70,22 @@ struct HbTaps35
         -1.7148253779e-03, -1.5356513996e-03 };
 };
 
+// Eco stage-0 set: same LS spec (0.43*pi edge) at 51 taps. -53 dB ripple for
+// 13 MACs/sample vs HbTaps71's -65 dB for 18, for hosts that trade a little
+// image rejection for a cheaper 2x path.
+struct HbTaps51
+{
+    static constexpr int p = 12;
+    static constexpr double hE[26] = {
+         3.5315496922e-04, -8.7769728054e-04,  1.7554353133e-03, -3.1152835401e-03,
+         5.1154070483e-03, -7.9584281393e-03,  1.1926000692e-02, -1.7457920319e-02,
+         2.5344539270e-02, -3.7256989657e-02,  5.7556431367e-02, -1.0234153397e-01,
+         3.1703918947e-01,  3.1703918947e-01, -1.0234153397e-01,  5.7556431367e-02,
+        -3.7256989657e-02,  2.5344539270e-02, -1.7457920319e-02,  1.1926000692e-02,
+        -7.9584281393e-03,  5.1154070483e-03, -3.1152835401e-03,  1.7554353133e-03,
+        -8.7769728054e-04,  3.5315496922e-04 };
+};
+
 // One 2x stage. Each instance owns delay history for one processing direction.
 template <typename Taps>
 struct HalfBand2x
@@ -136,12 +152,18 @@ struct Oversampler
     HalfBand2x<HbTaps71> s0;
     HalfBand2x<HbTaps47> s1;
     HalfBand2x<HbTaps35> s2;
+    HalfBand2x<HbTaps51> s0e;              // used when ecoStage0 is set
     int stages = 2;                        // default 4x
     int capacity = 0;                      // largest host-rate block accepted
     std::vector<float> tmp, tmp2;          // ping-pong scratch for mid rates
     HalfBand2x<HbTaps71> down0;
     HalfBand2x<HbTaps47> down1;
     HalfBand2x<HbTaps35> down2;
+    HalfBand2x<HbTaps51> down0e;
+
+    // Swap stage 0 (the strongest, most expensive filter) for the 51-tap eco
+    // set in both directions. Leave false for the full -65 dB stage.
+    bool ecoStage0 = false;
 
     void setStages (int s) { stages = std::clamp (s, 1, 3); }
     int  factor() const { return 1 << stages; }
@@ -149,6 +171,7 @@ struct Oversampler
     void prepare (int maxBlock)
     {
         s0.init(); down0.init();
+        s0e.init(); down0e.init();
         s1.init(); down1.init();
         s2.init(); down2.init();
         capacity = std::max (0, maxBlock);
@@ -158,6 +181,7 @@ struct Oversampler
     void reset()
     {
         s0.reset(); down0.reset();
+        s0e.reset(); down0e.reset();
         s1.reset(); down1.reset();
         s2.reset(); down2.reset();
     }
@@ -188,7 +212,7 @@ struct Oversampler
         for (int i = 0; i < n; ++i)
         {
             double e, o;
-            if (stage == 0)      s0.up (in[i], e, o);
+            if (stage == 0)      { if (ecoStage0) s0e.up (in[i], e, o); else s0.up (in[i], e, o); }
             else if (stage == 1) s1.up (in[i], e, o);
             else                 s2.up (in[i], e, o);
             out[2 * i] = (float) e; out[2 * i + 1] = (float) o;
@@ -203,7 +227,8 @@ struct Oversampler
         if (stages == 1)
         {
             for (int i = 0; i < n; ++i)
-                out[i] = (float) down0.down (in[2 * i], in[2 * i + 1]);
+                out[i] = (float) (ecoStage0 ? down0e.down (in[2 * i], in[2 * i + 1])
+                                           : down0.down  (in[2 * i], in[2 * i + 1]));
             return;
         }
         // downsample highest stage first: stage (stages-1) ... stage 0
@@ -217,7 +242,8 @@ struct Oversampler
     {
         for (int i = 0; i < n; ++i)
         {
-            const double y = stage == 0 ? down0.down (in[2 * i], in[2 * i + 1])
+            const double y = stage == 0 ? (ecoStage0 ? down0e.down (in[2 * i], in[2 * i + 1])
+                                                     : down0.down  (in[2 * i], in[2 * i + 1]))
                            : stage == 1 ? down1.down (in[2 * i], in[2 * i + 1])
                                         : down2.down (in[2 * i], in[2 * i + 1]);
             out[i] = (float) y;
@@ -230,7 +256,7 @@ struct Oversampler
         double l = 0.0;
         for (int s = 0; s < stages; ++s)
         {
-            const int N = s == 0 ? 71 : s == 1 ? 47 : 35;
+            const int N = s == 0 ? (ecoStage0 ? 51 : 71) : s == 1 ? 47 : 35;
             l += (double) (N - 1) / (double) (1 << (s + 1));
         }
         return l;

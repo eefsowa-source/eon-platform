@@ -167,3 +167,35 @@ EON_TEST_CASE("oversampling reset clears interpolation and decimation state at e
             EON_CHECK_NEAR(actual_down[static_cast<size_t>(i)], expected_down[static_cast<size_t>(i)], 0.0);
     }
 }
+
+EON_TEST_CASE("eco stage-0 roundtrip is transparent and cheaper")
+{
+    std::vector<float> input(sine_sample_count);
+    std::vector<float> upsampled(static_cast<size_t>(largest_block_size) * 8u);
+    std::vector<float> eco_out(sine_sample_count);
+    std::vector<float> input_copy(sine_sample_count);
+    for (int i = 0; i < sine_sample_count; ++i)
+        input[static_cast<size_t>(i)] = static_cast<float>(0.5 * std::sin(
+            2.0 * std::acos(-1.0) * 1000.0 * static_cast<double>(i) / 48000.0));
+    input_copy = input;
+
+    eon::Oversampler eco;
+    eco.ecoStage0 = true;
+    eco.setStages(1);
+    eco.prepare(largest_block_size);
+    render_round_trip(eco, input, largest_block_size, upsampled, eco_out);
+
+    // A 2x half-band roundtrip delays by (N-1)/2 base samples, so compare
+    // against the input shifted by the eco filter's latency.
+    const int delay = static_cast<int>(std::lround(eco.latencySamples()));
+    EON_CHECK(delay < static_cast<int>(std::lround(([] {
+        eon::Oversampler full;
+        full.setStages(1);
+        return full.latencySamples();
+    })())));
+    double peak = 0.0;
+    for (int i = delay; i < sine_sample_count; ++i)
+        peak = std::max(peak, std::abs(static_cast<double>(eco_out[static_cast<size_t>(i)]) -
+                                      static_cast<double>(input_copy[static_cast<size_t>(i - delay)])));
+    EON_CHECK(peak < 1.0e-3);
+}
