@@ -132,34 +132,36 @@ struct HalfBand2x
         std::fill (std::begin (eBuf), std::end (eBuf), 0.0);
         w = ew = 0;
     }
-    void init() { dl.assign (L, 0.0); reset(); }
+    // Mirrored delay line: every push writes the low and high copies, so the
+    // FIR window is a contiguous read with no modulo per tap.
+    void init() { dl.assign (2 * L, 0.0); reset(); }
 
     inline void push (double x)
     {
         dl[(size_t) w] = x;
+        dl[(size_t) (w + L)] = x;
         w = (w + 1 < L) ? w + 1 : 0;
     }
+
+    // Mirrored line: the low and high copies always hold the same sample, so
+    // every age below L + w is a valid index and no modulo is needed. Ages at
+    // or above that would wrap past the array, which is why the callers stay
+    // inside L.
     inline double at (int age) const        // age 0 = newest
     {
-        int i = w - 1 - age;
-        while (i < 0) i += L;
-        return dl[(size_t) i];
+        return dl[(size_t) (w - 1 - age + L)];
     }
 
-    // Symmetric-folded FIR over the current delay line. Cursor a starts at the
-    // newest sample and walks backwards; cursor b starts at age L-1 and walks
-    // forwards, so each iteration holds ages (i, L-1-i).
+    // Symmetric-folded FIR over the mirrored window. Ages (i, L-1-i) land at
+    // dl[w+i] and dl[w-1+L-i], so the two cursors become contiguous reads
+    // walking in opposite directions and the loop carries no wrap branches.
     inline double folded() const
     {
-        int a = w - 1;  if (a < 0) a += L;
-        int b = w;
+        const double* fwd = dl.data() + (size_t) w;              // age L-1 -> 0
+        const double* bwd = dl.data() + (size_t) (w - 1 + L);    // age 0 -> L-1
         double acc = 0.0;
         for (int i = 0; i < L / 2; ++i)
-        {
-            acc += Taps::hE[i] * (dl[(size_t) a] + dl[(size_t) b]);
-            if (--a < 0) a += L;
-            if (++b == L) b = 0;
-        }
+            acc += Taps::hE[i] * (fwd[i] + bwd[-i]);
         return acc;
     }
 
