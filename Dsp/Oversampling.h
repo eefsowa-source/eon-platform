@@ -100,16 +100,19 @@ struct HalfBand2x
         std::fill (std::begin (eBuf), std::end (eBuf), 0.0);
         w = ew = 0;
     }
-    void init() { dl.assign (L, 0.0); reset(); }
+    // Mirrored delay line: every push writes the low and high copies, so the
+    // FIR window is a contiguous read with no modulo per tap.
+    void init() { dl.assign (2 * L, 0.0); reset(); }
 
     inline void push (double x)
     {
         dl[(size_t) w] = x;
-        w = (w + 1) % L;
+        dl[(size_t) (w + L)] = x;
+        w = w + 1 == L ? 0 : w + 1;
     }
     inline double at (int age) const        // age 0 = newest
     {
-        return dl[(size_t) ((w - 1 - age + 2 * L) % L)];
+        return dl[(size_t) (w - 1 - age + L)];
     }
 
     // consume one base-rate sample, emit a pair
@@ -139,8 +142,9 @@ struct HalfBand2x
     inline double eDelayed (double e)
     {
         eBuf[ew] = e;
-        const double v = 0.5 * eBuf[(ew - Taps::p + eCap) % eCap];
-        ew = (ew + 1) % eCap;
+        const int i = ew - Taps::p;
+        const double v = 0.5 * eBuf[i < 0 ? i + eCap : i];
+        ew = ew + 1 == eCap ? 0 : ew + 1;
         return v;
     }
 };
