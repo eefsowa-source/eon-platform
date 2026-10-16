@@ -86,6 +86,28 @@ struct HbTaps51
         -8.7769728054e-04,  3.5315496922e-04 };
 };
 
+// FIR dot over the mirrored window: four independent accumulators break the
+// sequential add dependency chain, and tap symmetry (hE[j] == hE[L-1-j])
+// folds the age-descending reads into one ascending pass. The pairwise
+// summation order differs from a scalar running sum, so output can move by
+// one float ulp.
+static inline double hbDot (const double* h, const double* d, int n) noexcept
+{
+    double a0 = 0.0, a1 = 0.0, a2 = 0.0, a3 = 0.0;
+    int j = 0;
+    for (; j + 3 < n; j += 4)
+    {
+        a0 += h[j]     * d[j];
+        a1 += h[j + 1] * d[j + 1];
+        a2 += h[j + 2] * d[j + 2];
+        a3 += h[j + 3] * d[j + 3];
+    }
+    double acc = (a0 + a1) + (a2 + a3);
+    for (; j < n; ++j)
+        acc += h[j] * d[j];
+    return acc;
+}
+
 // One 2x stage. Each instance owns delay history for one processing direction.
 template <typename Taps>
 struct HalfBand2x
@@ -120,9 +142,7 @@ struct HalfBand2x
     {
         push (x);
         e = at (Taps::p + 1);
-        double acc = 0.0;
-        for (int i = 0; i < L; ++i) acc += Taps::hE[i] * at (i);
-        o = 2.0 * acc;
+        o = 2.0 * hbDot (Taps::hE, dl.data() + (size_t) w, L);
     }
 
     // consume an (even, odd) pair at the doubled rate, emit one base sample
@@ -130,9 +150,7 @@ struct HalfBand2x
     {
         push (o);                            // odd samples run the FIR branch
         const double ev = eDelayed (e);
-        double acc = 0.0;
-        for (int j = 0; j < L; ++j) acc += Taps::hE[j] * at (j);
-        return ev + acc;
+        return ev + hbDot (Taps::hE, dl.data() + (size_t) w, L);
     }
 
     // even branch needs its own p-deep delay (small fixed line; p <= 17)
