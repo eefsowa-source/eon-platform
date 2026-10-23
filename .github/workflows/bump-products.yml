@@ -1,9 +1,16 @@
 name: Bump platform pin in products
 
+# Fires on every v* tag. The glob is deliberately wide because GitHub's ref
+# patterns cannot express "not a pre-release"; the first step rejects anything
+# that is not a plain vMAJOR.MINOR.PATCH release, so a v1.2.3-rc1 tag never
+# bumps the products onto an unvalidated platform.
 on:
   push:
     tags: ["v*"]
 
+# GITHUB_TOKEN is not used for the cross-repo writes: they authenticate with
+# PLATFORM_BUMP_TOKEN, which needs contents:write and pull_requests:write on
+# each product repository.
 permissions:
   contents: read
 
@@ -14,29 +21,111 @@ jobs:
       GH_TOKEN: ${{ secrets.PLATFORM_BUMP_TOKEN }}
       TAG: ${{ github.ref_name }}
     steps:
-      - name: Open a bump PR in every product repo that uses the pin
+      - name: Require a release tag
+        id: release
         run: |
-          set -u
-          # Products without cmake/Platform.cmake are skipped automatically —
-          # a repo opts in simply by adding the pin file.
+          set -euo pipefail
+          if printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "is_release=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_release=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::$TAG is not a vMAJOR.MINOR.PATCH release tag; product pins are left alone."
+          fi
+
+      - name: Open a bump PR in every product repo that uses the pin
+        if: steps.release.outputs.is_release == 'true'
+        run: |
+          set -uo pipefail
+          failed=0
+          err=$(mktemp)
+          trap 'rm -f "$err"' EXIT
+
+          # Products without cmake/Platform.cmake are skipped automatically — a
+          # repo opts in simply by adding the pin file.
           for repo in Tube-comp YinYeng ii76 Wavetable EEVE1073 EONisya Mini-EEF eon-audio-god; do
             full="eefsowa-source/$repo"
-            sha=$(gh api "repos/$full/contents/cmake/Platform.cmake?ref=main" -q .sha 2>/dev/null) \
-              || { echo "$repo: no platform pin, skip"; continue; }
-            content=$(gh api "repos/$full/contents/cmake/Platform.cmake?ref=main" -q .content | tr -d '\n' | base64 -d)
+            : > "$err"
+
+            # A 404 on the pin file is the opt-out signal. Every other failure
+            # (bad token, rate limit, missing repo) must fail the job: the old
+            # version reported all of them as "no platform pin, skip".
+            if ! sha=$(gh api "repos/$full/contents/cmake/Platform.cmake?ref=main" -q .sha 2>"$err"); then
+              if ! grep -q 'HTTP 404' "$err"; then
+                echo "::error title=Bump failed::$repo: cannot read cmake/Platform.cmake: $(tr '\n' ' ' < "$err")"
+                failed=1
+                continue
+              fi
+              if ! gh api "repos/$full" >/dev/null 2>&1; then
+                echo "::error title=Bump failed::$repo: repository not found (check the name in this workflow)"
+                failed=1
+                continue
+              fi
+              echo "$repo: no platform pin, skip"
+              continue
+            fi
+
+            if ! content=$(gh api "repos/$full/contents/cmake/Platform.cmake?ref=main" -q .content 2>"$err" | tr -d '\n' | base64 -d); then
+              echo "::error title=Bump failed::$repo: cannot decode cmake/Platform.cmake: $(tr '\n' ' ' < "$err")"
+              failed=1
+              continue
+            fi
+
+            if ! printf '%s\n' "$content" | grep -q 'set(EON_PLATFORM_REF'; then
+              echo "::error title=Bump failed::$repo: cmake/Platform.cmake has no EON_PLATFORM_REF line"
+              failed=1
+              continue
+            fi
+
             new=$(printf '%s\n' "$content" | sed -E 's/set\(EON_PLATFORM_REF "[^"]+"\)/set(EON_PLATFORM_REF "'"$TAG"'")/')
-            [ "$content" = "$new" ] && { echo "$repo: already at $TAG, skip"; continue; }
+            if [ "$content" = "$new" ]; then
+              echo "$repo: already at $TAG, skip"
+              continue
+            fi
+
             branch="chore/platform-$TAG"
-            mainsha=$(gh api "repos/$full/git/ref/heads/main" -q .object.sha)
-            gh api -X POST "repos/$full/git/refs" -f ref="refs/heads/$branch" -f sha="$mainsha" >/dev/null 2>&1 \
-              || gh api -X PATCH "repos/$full/git/refs/heads/$branch" -f sha="$mainsha" -f force=true >/dev/null
-            gh api -X PUT "repos/$full/contents/cmake/Platform.cmake" \
-              -f message="chore: bump eon-platform to $TAG" \
-              -f content="$(printf '%s\n' "$new" | base64)" \
-              -f sha="$sha" -f branch="$branch" >/dev/null
-            gh pr create --repo "$full" --base main --head "$branch" \
-              --title "Bump eon-platform to $TAG" \
-              --body "Automated platform pin bump from eon-platform $TAG. This PR's CI validates the product against the new platform version — it is the downstream smoke gate." \
-              2>/dev/null || echo "$repo: PR already exists or failed to open"
-            echo "$repo: bump PR opened"
+            if ! mainsha=$(gh api "repos/$full/git/ref/heads/main" -q .object.sha 2>"$err"); then
+              echo "::error title=Bump failed::$repo: cannot read main: $(tr '\n' ' ' < "$err")"
+              failed=1
+              continue
+            fi
+            if ! gh api -X POST "repos/$full/git/refs" \
+                -f ref="refs/heads/$branch" -f sha="$mainsha" >/dev/null 2>"$err"; then
+              # Usually the branch survives from an earlier run: move it to main.
+              if ! gh api -X PATCH "repos/$full/git/refs/heads/$branch" \
+                  -f sha="$mainsha" -f force=true >/dev/null 2>"$err"; then
+                echo "::error title=Bump failed::$repo: cannot create or reset $branch: $(tr '\n' ' ' < "$err")"
+                failed=1
+                continue
+              fi
+            fi
+
+            if ! gh api -X PUT "repos/$full/contents/cmake/Platform.cmake" \
+                -f message="chore: bump eon-platform to $TAG" \
+                -f content="$(printf '%s\n' "$new" | base64 -w0)" \
+                -f sha="$sha" -f branch="$branch" >/dev/null 2>"$err"; then
+              echo "::error title=Bump failed::$repo: cannot update the pin: $(tr '\n' ' ' < "$err")"
+              failed=1
+              continue
+            fi
+
+            # gh pr create fails when a PR already exists for the branch, which is
+            # the normal state on a re-run. Only that case is benign; anything else
+            # fails the job instead of printing "PR opened" after a failed create.
+            if pr_url=$(gh pr create --repo "$full" --base main --head "$branch" \
+                  --title "Bump eon-platform to $TAG" \
+                  --body "Automated platform pin bump from eon-platform $TAG. This PR's CI validates the product against the new platform version — it is the downstream smoke gate." \
+                  2>"$err"); then
+              echo "$repo: bump PR opened: $pr_url"
+            elif existing=$(gh pr list --repo "$full" --head "$branch" --state open \
+                              --json url -q '.[0].url // empty' 2>/dev/null) && [ -n "$existing" ]; then
+              echo "$repo: bump PR already open: $existing"
+            else
+              echo "::error title=Bump failed::$repo: cannot open the bump PR: $(tr '\n' ' ' < "$err")"
+              failed=1
+            fi
           done
+
+          if [ "$failed" -ne 0 ]; then
+            echo "::error title=Bump failed::at least one product repo was not bumped — see the annotations above."
+            exit 1
+          fi
