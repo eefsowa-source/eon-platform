@@ -16,6 +16,7 @@
 #include "Dsp/Transformer.h"
 
 #include <cmath>
+#include <limits>
 #include <numbers>
 #include <vector>
 
@@ -132,6 +133,42 @@ EON_TEST_CASE("ClassA dielectric-absorption step response is rate independent")
         runs.push_back (stepResponse<eon::ClassAStage> (rate, 0.5f, 0.5, 0.005, setup));
 
     EON_CHECK (relativeSpread (runs) < 0.02);
+}
+
+EON_TEST_CASE("Inductor output gain is rate independent")
+{
+    // Internal state alone is not enough: the output tap must also be
+    // rate independent, or the passband gain follows the oversampling factor.
+    const auto settledOutput = [] (double rate)
+    {
+        eon::InductorResonator stage;
+        stage.prepare (rate);
+        stage.reset();
+        float y = 0.f;
+        const long long total = static_cast<long long> (0.3 * rate);
+        for (long long i = 0; i < total; ++i)
+            y = stage.process (0.2f, 3000.f, 0.5f, 1.f);
+        return static_cast<double> (y);
+    };
+
+    const double reference = settledOutput (48000.0);
+    EON_CHECK (reference > 0.0);
+    for (const double rate : kRates)
+        EON_CHECK_NEAR (settledOutput (rate) / reference, 1.0, 1e-3);
+}
+
+EON_TEST_CASE("DC blocker prepare ignores non-finite arguments")
+{
+    eon::DCBlocker blocker;
+    blocker.prepare (48000.0, 18.0);
+    const double good = blocker.R;
+
+    blocker.prepare (std::numeric_limits<double>::infinity(), 18.0);
+    EON_CHECK_NEAR (blocker.R, good, 0.0);
+    blocker.prepare (48000.0, std::numeric_limits<double>::infinity());
+    EON_CHECK_NEAR (blocker.R, good, 0.0);
+    blocker.prepare (std::nan (""), 18.0);
+    EON_CHECK_NEAR (blocker.R, good, 0.0);
 }
 
 EON_TEST_CASE("Inductor tail step response is rate independent")

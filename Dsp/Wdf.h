@@ -25,6 +25,11 @@ namespace eon {
 //    resistive form (emitted = Vs, internal Rs folds into its port R).
 //  * Nonlinear elements (diode, diode pair) sit at the root and solve
 //    v/i in the wave domain — no iteration inside the tree.
+//  * Configure leaves BEFORE constructing an adaptor. Each adaptor latches its
+//    parent port resistance from its children in the constructor (series
+//    R0 = sum of R, parallel G0 = sum of G), so set the sample rate and values
+//    on every leaf first. Retuning a leaf afterwards leaves the parent stale
+//    and the junction stops being reflection-free; call retune() to relatch.
 //
 // Voltage read-out at any element: v = 0.5*(a + b) with the element's own
 // sign convention — for a cap across the output, read 0.5*(incident+emitted).
@@ -113,7 +118,9 @@ struct WdfISourceRes : WdfPort
 struct WdfSeries2 : WdfPort
 {
     WdfPort& c1; WdfPort& c2;
-    WdfSeries2 (WdfPort& a, WdfPort& b) : c1 (a), c2 (b) { R = c1.R + c2.R; }
+    WdfSeries2 (WdfPort& a, WdfPort& b) : c1 (a), c2 (b) { retune(); }
+    // Relatch the parent R after a child's port resistance changed.
+    void retune() { R = c1.R + c2.R; }
     double emitted() const override { return -(c1.emitted() + c2.emitted()); }
     void incident (double a0) override
     {
@@ -130,8 +137,10 @@ struct WdfSeries3 : WdfPort
     WdfPort& c1; WdfPort& c2; WdfPort& c3;
     WdfSeries3 (WdfPort& a, WdfPort& b, WdfPort& c) : c1 (a), c2 (b), c3 (c)
     {
-        R = c1.R + c2.R + c3.R;
+        retune();
     }
+    // Relatch the parent R after a child's port resistance changed.
+    void retune() { R = c1.R + c2.R + c3.R; }
     double emitted() const override
     {
         return -(c1.emitted() + c2.emitted() + c3.emitted());
@@ -152,10 +161,12 @@ struct WdfParallel2 : WdfPort
 {
     WdfPort& c1; WdfPort& c2;
     double G0;
-    WdfParallel2 (WdfPort& a, WdfPort& b) : c1 (a), c2 (b)
+    WdfParallel2 (WdfPort& a, WdfPort& b) : c1 (a), c2 (b) { retune(); }
+    // Relatch the parent R/G0 after a child's port resistance changed.
+    void retune()
     {
-        const double G = 1.0 / c1.R + 1.0 / c2.R;
-        R = 1.0 / G;  G0 = G;
+        G0 = 1.0 / c1.R + 1.0 / c2.R;
+        R = 1.0 / G0;
     }
     double emitted() const override                       // b0 = sum(Gc/G0)*ac
     {

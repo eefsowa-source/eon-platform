@@ -321,6 +321,30 @@ EON_TEST_CASE("ADAA2 uses the three-node centroid when all nodes are close")
     EON_CHECK_NEAR(actual, eon::SoftClip::f(center), 2e-17);
 }
 
+EON_TEST_CASE("ADAA2 stays accurate on slow signals where nodes are nearly coincident")
+{
+    // A slow sine at float precision makes consecutive nodes differ by a few
+    // ULPs; the raw second divided difference cancels catastrophically there
+    // (6e-3 error before the centroid regime was widened).
+    for (const double w : { 1e-3, 1e-4, 1e-5 })
+    {
+        eon::SoftClipSat saturator;
+        double worst = 0.0;
+        for (int i = 0; i < 400000; ++i)
+        {
+            const float x = static_cast<float>(0.9 * std::sin(w * i));
+            const float y = saturator.process(x);
+            if (i > 10)
+            {
+                const double ref = eon::SoftClip::f(0.9 * std::sin(w * (i - 1)));
+                worst = std::max(worst, std::abs(static_cast<double>(y) - ref));
+            }
+        }
+        // slope-limited group delay error is ~amp*w; allow a small margin.
+        EON_CHECK(worst < 0.9 * w * 1.5 + 2e-5);
+    }
+}
+
 EON_TEST_CASE("ADAA2 reaches the constant-input limit")
 {
     eon::SoftClipSat saturator;

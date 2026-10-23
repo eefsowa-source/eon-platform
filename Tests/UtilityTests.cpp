@@ -1,3 +1,4 @@
+#include "Dsp/Measure.h"
 #include "Dsp/Rng.h"
 #include "Dsp/Solvers.h"
 #include "Dsp/Triode.h"
@@ -9,6 +10,8 @@
 #include <cmath>
 #include <initializer_list>
 #include <limits>
+#include <numbers>
+#include <vector>
 
 template <typename Solver>
 static bool reportsSolveFailure(const Solver& solver)
@@ -365,4 +368,88 @@ EON_TEST_CASE("korenIp analytic derivative matches central difference")
                             1e-4 * std::max (1.0, (double) std::abs (central)));
         }
     }
+}
+
+EON_TEST_CASE("SvfTPT step overshoot matches the documented damping values")
+{
+    // Documents the SvfTPT header comment: Q = 0.5 (R = 1) is critically
+    // damped, Q = 1/sqrt(2) is Butterworth, Q = 1 is visibly peaky.
+    const auto overshootPercent = [] (double q)
+    {
+        eon::SvfTPT filter;
+        filter.setParams (1000.0, q, 48000.0);
+        filter.reset();
+        double peak = 0.0;
+        for (int i = 0; i < 48000; ++i)
+            peak = std::max (peak, filter.process (1.0).lp);
+        return 100.0 * (peak - 1.0);
+    };
+
+    EON_CHECK_NEAR (overshootPercent (0.5), 0.0, 0.1);
+    EON_CHECK_NEAR (overshootPercent (std::numbers::sqrt2 / 2.0), 4.3454, 0.1);
+    EON_CHECK_NEAR (overshootPercent (1.0), 16.3473, 0.2);
+}
+
+EON_TEST_CASE("newtonScalar keeps a bracket when the residual product underflows")
+{
+    // f(lo)*f(hi) underflows to zero here, so the bracket has to be detected
+    // from the signs; the root must be the same as for the unscaled function.
+    const auto scaled = [] (double x) { return 1e-200 * (x - 3.0); };
+    const auto scaledDerivative = [] (double) { return 1e-200; };
+    EON_CHECK_NEAR (eon::newtonScalar (scaled, scaledDerivative, 0.0, 0.0, 10.0),
+                    3.0, 1e-9);
+    EON_CHECK_NEAR (eon::newtonScalar (scaled, nullptr, 0.0, 0.0, 10.0), 3.0, 1e-9);
+
+    const auto plain = [] (double x) { return x - 3.0; };
+    const auto plainDerivative = [] (double) { return 1.0; };
+    EON_CHECK_NEAR (eon::newtonScalar (plain, plainDerivative, 0.0, 0.0, 10.0),
+                    3.0, 1e-9);
+    EON_CHECK_NEAR (eon::newtonScalar (plain, nullptr, 0.0, 0.0, 10.0), 3.0, 1e-9);
+}
+
+EON_TEST_CASE("newtonScalar cannot manufacture a bracket from a non-finite residual")
+{
+    const auto f = [] (double x)
+    {
+        return x < 5.0 ? std::numeric_limits<double>::quiet_NaN() : x - 7.0;
+    };
+    const auto df = [] (double) { return 1.0; };
+    const double root = eon::newtonScalar (f, df, 0.0, 0.0, 10.0);
+    EON_CHECK (std::isfinite (root));
+    EON_CHECK (root > 0.0 && root < 10.0);
+}
+
+EON_TEST_CASE("WDF adaptors relatch their port resistance after retune")
+{
+    eon::WdfCapacitor c1 (1e-6);
+    eon::WdfCapacitor c2 (1e-6);
+    eon::WdfSeries2 series (c1, c2);
+    EON_CHECK_NEAR (series.R, 2.0, 1e-15);
+
+    c1.setSampleRate (48000.0);
+    EON_CHECK_NEAR (c1.R, 1.0 / (2.0 * 1e-6 * 48000.0), 1e-9);
+    EON_CHECK_NEAR (series.R, 2.0, 1e-15);          // stale until retune()
+    series.retune();
+    EON_CHECK_NEAR (series.R, c1.R + c2.R, 1e-12);
+
+    eon::WdfParallel2 parallel (c1, c2);
+    EON_CHECK_NEAR (parallel.R, 1.0 / (1.0 / c1.R + 1.0 / c2.R), 1e-12);
+
+    eon::WdfSeries3 triple (c1, c2, c1);
+    EON_CHECK_NEAR (triple.R, 2.0 * c1.R + c2.R, 1e-12);
+}
+
+EON_TEST_CASE("measure helpers reject input with no measurable fundamental")
+{
+    std::vector<float> dc (1024, 0.25f);
+    EON_CHECK_NEAR (eon::measure::binMag (dc.data(), dc.size(), 0.0, 48000.0),
+                    0.25, 1e-12);
+    EON_CHECK (std::isnan (eon::measure::thdPercent (dc.data(), dc.size(), 0.0, 48000.0)));
+    EON_CHECK (std::isnan (eon::measure::thdPercent (dc.data(), dc.size(), 1000.0, 0.0)));
+    EON_CHECK (std::isnan (eon::measure::thdPercent (dc.data(), dc.size(), 1000.0, 48000.0, 0)));
+    EON_CHECK (eon::measure::harmonics (dc.data(), dc.size(), 1000.0, 48000.0, 0).empty());
+
+    std::vector<float> silence (1024, 0.0f);
+    EON_CHECK (std::isnan (eon::measure::thdPercent (silence.data(), silence.size(),
+                                                     1000.0, 48000.0)));
 }

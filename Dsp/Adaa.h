@@ -59,8 +59,21 @@ struct ADAA2
         const double dx12 = x1 - x2;
         const double dx02 = (double) x0 - x2;
 
+        // When all three nodes are within ~1e-4 of each other the second divided
+        // difference of F2 cancels ~eps*|F2|/span^2 (6e-3 at span 6e-8, measured),
+        // far above the O(span^2) error of the centroid approximation
+        // f((x0+x1+x2)/3). Use the centroid in that regime; the exact branches
+        // below only matter once the quotient is well conditioned.
+        const double span = std::fmax (std::abs (dx02),
+                                       std::fmax (std::abs (dx01), std::abs (dx12)));
+        constexpr double kCentroidSpan = 1e-4;
+
         double y;
-        if (std::abs (dx02) < eps)
+        if (span < kCentroidSpan)
+        {
+            y = f ((static_cast<double> (x0) + x1 + x2) / 3.0);
+        }
+        else if (std::abs (dx02) < eps)
         {
             if (std::abs (dx01) < eps)
             {

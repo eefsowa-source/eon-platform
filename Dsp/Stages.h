@@ -21,7 +21,8 @@ struct DCBlocker
     double R = 0.9997;
     void prepare (double sampleRate, double cutoffHz = 18.0) noexcept
     {
-        if (! (sampleRate > 0.0) || ! (cutoffHz > 0.0))
+        if (! std::isfinite (sampleRate) || ! std::isfinite (cutoffHz)
+            || ! (sampleRate > 0.0) || ! (cutoffHz > 0.0))
             return;                         // keep the previous (or default) R on bad input
         R = std::exp (-2.0 * std::numbers::pi * cutoffHz / sampleRate);
     }
@@ -49,6 +50,7 @@ struct InductorResonator
     double pole1 = 0.80, pole2 = 0.86;
     double feed1 = 0.18, feed2 = 0.14, feed3 = 0.05;
     double satScale = 0.55, outScale = 0.82;
+    static constexpr double kLp1Tap = 0.14;     // output weight of lp1 (rate independent)
     double rateHz = 0.0;
     float cachedFreq = -1.f, cachedQ = -1.f;
 
@@ -103,7 +105,10 @@ struct InductorResonator
         // two leaky integrators give the inductor's stored-energy tail
         lp1 = out * feed1 + lp1 * pole1;
         lp2 = lp1 * feed2 + lp2 * pole2;
-        return (float) (out * outScale + lp1 * feed2 + lp2 * feed3);
+        // The lp1 output tap is a fixed weight (the authoring-rate feed2). It must
+        // NOT use the rate-compensated feed2 above, which shrinks with the
+        // processing rate and would make the passband gain depend on it.
+        return (float) (out * outScale + lp1 * kLp1Tap + lp2 * feed3);
     }
 };
 

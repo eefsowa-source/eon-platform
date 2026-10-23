@@ -37,7 +37,10 @@ struct OnePoleTPT
 };
 
 // TPT state-variable filter: simultaneous lp / bp / hp (notch = lp + hp).
-// R = 1/(2Q) damping. Q = 0.5 is butterworth-ish.
+// R = 1/(2Q) is the damping term. Q = 0.5 (R = 1) is critically damped and has
+// no passband peak; Butterworth is Q = 1/sqrt(2) ~ 0.7071 (~4.3% step
+// overshoot) and Q = 1 peaks at ~16%. Measured by the step test in
+// Tests/UtilityTests.cpp.
 struct SvfTPT
 {
     double g = 0.0, R = 1.0, s1 = 0.0, s2 = 0.0;

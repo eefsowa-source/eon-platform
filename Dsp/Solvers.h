@@ -72,6 +72,19 @@ inline double lambertW0log (double logX)
     return w;
 }
 
+namespace detail {
+
+// Sign test that cannot underflow. NaN operands report "no sign change" so a
+// non-finite sample can never manufacture a bracket.
+inline bool signDiffers (double a, double b)
+{
+    // Strict opposite signs: an exact zero endpoint is not a sign change.
+    return std::isfinite (a) && std::isfinite (b)
+        && ((a < 0.0 && b > 0.0) || (a > 0.0 && b < 0.0));
+}
+
+} // namespace detail
+
 inline double lambertW0 (double x)
 {
     if (x <= 0.0) return 0.0;
@@ -81,30 +94,42 @@ inline double lambertW0 (double x)
 // Scalar Newton on f(x) = 0 inside [lo, hi]. f must be evaluable; df may be
 // nullptr -> secant estimate. Keeps a bracket once a sign change is seen and
 // bisects whenever Newton leaves it — guaranteed progress on sane inputs.
+//
+// Scale invariant: the bracket is detected by sign bits, not by f(lo)*f(hi)
+// (that product underflows to zero for residuals below ~1e-154), and any
+// non-zero finite derivative is used however small it is (an absolute
+// |df| < 1e-20 cutoff silently disabled Newton for scaled residuals).
 template <typename F, typename DF>
 inline double newtonScalar (F&& f, DF&& df, double x0, double lo, double hi,
                             int maxIter = 20, double tol = 1e-12)
 {
     double x = std::clamp (x0, lo, hi);
-    double flo = f (lo), fhi = f (hi);
-    bool bracketed = (flo * fhi < 0.0);
+    double flo = f (lo);
+    const double fhi = f (hi);
+    const bool bracketed = detail::signDiffers (flo, fhi);
+
+    // Convergence tolerance is relative to the residual scale of the bracket, so
+    // f scaled by 1e-200 converges on the same root as f scaled by 1. An
+    // absolute |fx| < tol cutoff would accept x0 immediately in that case.
+    const double scaleA = std::isfinite (flo) ? std::abs (flo) : 0.0;
+    const double scaleB = std::isfinite (fhi) ? std::abs (fhi) : 0.0;
+    const double ftol = tol * std::max (scaleA, scaleB);
 
     for (int i = 0; i < maxIter; ++i)
     {
         const double fx = f (x);
-        if (std::abs (fx) < tol) return x;
+        if (fx == 0.0 || std::abs (fx) < ftol) return x;
 
-        if (bracketed)
+        if (bracketed && std::isfinite (fx))
         {
-            if (fx * flo > 0.0) { lo = x; flo = fx; }
-            else                { hi = x; fhi = fx; }
+            if (! detail::signDiffers (fx, flo)) { lo = x; flo = fx; }
+            else                                 { hi = x; }
         }
 
         double d;
         if constexpr (! std::is_same_v<std::decay_t<DF>, std::nullptr_t>)
         {
             d = df (x);
-            if (! std::isfinite (d) || std::abs (d) < 1e-20) d = 0.0;
         }
         else
         {
@@ -112,9 +137,16 @@ inline double newtonScalar (F&& f, DF&& df, double x0, double lo, double hi,
             d = (f (x + h) - f (x - h)) / (2.0 * h);
         }
 
-        double xn = (d != 0.0) ? x - fx / d : x;
-        if (! std::isfinite (xn) || xn <= lo || xn >= hi)
-            xn = 0.5 * (lo + hi);                       // bisection fallback
+        // Bisection is the safe default; a Newton step is taken only when it
+        // lands inside the current bracket.
+        double xn = 0.5 * (lo + hi);
+        if (std::isfinite (d) && d != 0.0)
+        {
+            const double step = fx / d;
+            const double candidate = x - step;
+            if (std::isfinite (candidate) && candidate > lo && candidate < hi)
+                xn = candidate;
+        }
         if (std::abs (xn - x) < tol * std::max (1.0, std::abs (xn))) return xn;
         x = xn;
     }
