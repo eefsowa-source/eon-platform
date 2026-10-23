@@ -163,5 +163,6 @@ breaks that contract. Tests are always compiled with strict floating point
 
 MIT — see [LICENSE](LICENSE). SPDX headers mark every public header.
 
-Vendored dependencies under `third_party/` (sst-basic-blocks, sst-cpputils,
-simde) keep their own licenses.
+The `third_party/` submodules are unused upstream references, not part of this
+library. They keep their own licenses; `sst-basic-blocks` is GPL-3.0 and must
+not be linked into an MIT-licensed build.
