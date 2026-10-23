@@ -29,7 +29,9 @@ namespace eon {
 //   down: y[m]      = 0.5 * e[m - p] + sum_j hE[j] * o[m - j]
 //
 // where hE = even-indexed taps of the half-band kernel (the odd taps are all
-// zero except the centre 0.5), p = (N-3)/4.
+// zero except the centre 0.5), p = (N-3)/4. Both FIR sums are evaluated in
+// symmetric-folded form (see HalfBand2x::folded): the same sum up to float
+// rounding, at half the multiplies.
 // ---------------------------------------------------------------------------
 
 struct HbTaps71
@@ -71,8 +73,9 @@ struct HbTaps35
 };
 
 // Eco stage-0 set: same LS spec (0.43*pi edge) at 51 taps. -53 dB ripple for
-// 13 MACs/sample vs HbTaps71's -65 dB for 18, for hosts that trade a little
-// image rejection for a cheaper 2x path.
+// 13 MACs per output sample vs HbTaps71's -65 dB for 18 -- both counts are the
+// folded polyphase loop below (one multiply per tap pair) -- for hosts that
+// trade a little image rejection for a cheaper 2x path.
 struct HbTaps51
 {
     static constexpr int p = 12;
@@ -87,10 +90,39 @@ struct HbTaps51
 };
 
 // One 2x stage. Each instance owns delay history for one processing direction.
+//
+// The delay line is indexed by hand instead of with `%`, and the half-band taps
+// are folded: hE[i] == hE[L-1-i], so
+//
+//   sum_{i<L} hE[i] * at(i) == sum_{i<L/2} hE[i] * (at(i) + at(L-1-i))
+//
+// which halves the multiplies and lets the FIR loop walk two cursors that wrap
+// on a compare. The two sums differ only by float rounding.
+namespace detail {
+
+// The folded FIR equals the plain convolution only when hE is symmetric, so
+// every tap set is checked at compile time.
+template <typename Taps>
+constexpr bool hbTapsSymmetric()
+{
+    constexpr int L = sizeof (Taps::hE) / sizeof (double);
+    for (int i = 0; i < L / 2; ++i)
+        if (Taps::hE[i] != Taps::hE[L - 1 - i])
+            return false;
+    return true;
+}
+
+} // namespace detail
+
 template <typename Taps>
 struct HalfBand2x
 {
     static constexpr int L = sizeof (Taps::hE) / sizeof (double);
+    static_assert (L % 2 == 0, "half-band hE must hold an even number of taps");
+    static_assert (Taps::p + 2 < L, "even-branch delay must fit the odd-branch line");
+    static_assert (detail::hbTapsSymmetric<Taps>(),
+                   "half-band hE must be symmetric for folded evaluation");
+
     std::vector<double> dl;      // shared delay line
     int w = 0;                   // write cursor (circular)
 
@@ -105,11 +137,30 @@ struct HalfBand2x
     inline void push (double x)
     {
         dl[(size_t) w] = x;
-        w = (w + 1) % L;
+        w = (w + 1 < L) ? w + 1 : 0;
     }
     inline double at (int age) const        // age 0 = newest
     {
-        return dl[(size_t) ((w - 1 - age + 2 * L) % L)];
+        int i = w - 1 - age;
+        while (i < 0) i += L;
+        return dl[(size_t) i];
+    }
+
+    // Symmetric-folded FIR over the current delay line. Cursor a starts at the
+    // newest sample and walks backwards; cursor b starts at age L-1 and walks
+    // forwards, so each iteration holds ages (i, L-1-i).
+    inline double folded() const
+    {
+        int a = w - 1;  if (a < 0) a += L;
+        int b = w;
+        double acc = 0.0;
+        for (int i = 0; i < L / 2; ++i)
+        {
+            acc += Taps::hE[i] * (dl[(size_t) a] + dl[(size_t) b]);
+            if (--a < 0) a += L;
+            if (++b == L) b = 0;
+        }
+        return acc;
     }
 
     // consume one base-rate sample, emit a pair
@@ -117,30 +168,26 @@ struct HalfBand2x
     {
         push (x);
         e = at (Taps::p + 1);
-        double acc = 0.0;
-        for (int i = 0; i < L; ++i) acc += Taps::hE[i] * at (i);
-        o = 2.0 * acc;
+        o = 2.0 * folded();
     }
 
     // consume an (even, odd) pair at the doubled rate, emit one base sample
     inline double down (double e, double o)
     {
         push (o);                            // odd samples run the FIR branch
-        const double ev = eDelayed (e);
-        double acc = 0.0;
-        for (int j = 0; j < L; ++j) acc += Taps::hE[j] * at (j);
-        return ev + acc;
+        return eDelayed (e) + folded();
     }
 
     // even branch needs its own p-deep delay (small fixed line; p <= 17)
     static constexpr int eCap = 64;
+    static_assert ((eCap & (eCap - 1)) == 0, "eCap must be a power of two");
     double eBuf[eCap] = {};
     int ew = 0;
     inline double eDelayed (double e)
     {
         eBuf[ew] = e;
-        const double v = 0.5 * eBuf[(ew - Taps::p + eCap) % eCap];
-        ew = (ew + 1) % eCap;
+        const double v = 0.5 * eBuf[(ew - Taps::p + eCap) & (eCap - 1)];
+        ew = (ew + 1) & (eCap - 1);
         return v;
     }
 };
@@ -163,6 +210,11 @@ struct Oversampler
 
     // Swap stage 0 (the strongest, most expensive filter) for the 51-tap eco
     // set in both directions. Leave false for the full -65 dB stage.
+    //
+    // The eco and full stage-0 filters keep SEPARATE delay histories and have
+    // different latency. Change this flag only while the stream is stopped,
+    // followed by reset() (and a latency re-report): flipping it mid-stream
+    // switches to an empty history and produces a click.
     bool ecoStage0 = false;
 
     void setStages (int s) { stages = std::clamp (s, 1, 3); }
