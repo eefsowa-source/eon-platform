@@ -126,28 +126,35 @@ loading, visual rendering, or DAW listening results.
 
 ## Vendored third-party (added 2026-09-18)
 
-**Not part of the library.** These are git submodules kept as upstream
-reference only: no header in `Dsp/`, no test, no CMake target and no CI
-workflow includes any of them, so nothing here is compiled, linked or shipped
-by `eon_dsp`. Read the license note at the end of this section before using
-any of it.
+**Not part of the library, and not linked by anything.** No header in `Dsp/`,
+no test, no CMake target and no CI workflow references `third_party/`, so
+nothing here is compiled, linked or shipped by `eon_dsp`.
 
-| Path | Contents | Include (only if you deliberately opt in) |
-|---|---|---|
-| `third_party/sst-basic-blocks` | Surge Synth Team DSP primitives (C++20, header-only): `dsp/` (filters, envelopes, clippers, quads), `modulators/`, `mod-matrix/`, `params/`, `simd/`, `tables/` | `-I third_party/sst-basic-blocks/include` then `#include "sst/basic-blocks/..."` |
-| `third_party/sst-cpputils` | header-only utils required by sst-basic-blocks (`ring_buffer.h`, `rtsan_support.h`, allocators) | `-I third_party/sst-cpputils/include` |
-| `third_party/simde` | SIMDe — SSE intrinsics shim required by sst-basic-blocks on Apple Silicon | `-I third_party/simde` |
+| Path | Contents | License | State |
+|---|---|---|---|
+| `third_party/sst-basic-blocks` | Surge Synth Team DSP primitives (header-only: filters, envelopes, clippers, quads, modulators, mod-matrix, params, simd, tables) | **GPL-3.0** | **Removed 2026-10-24** — never used here and incompatible with an MIT build |
+| `third_party/sst-cpputils` | header-only utils that `sst-basic-blocks` needed (`ring_buffer.h`, `rtsan_support.h`, allocators) | MIT | Present; unused |
+| `third_party/simde` | SIMDe — SSE intrinsics shim that `sst-basic-blocks` needed on Apple Silicon | MIT | Present; unused |
 
 Update with `git -C third_party/<repo> pull` (shallow clones).
 
-**License hazard — `sst-basic-blocks` is GPL-3.0.** `eon_dsp` is MIT, so
-adding those include paths to a product build, or shipping that code inside a
-plugin binary, makes the combined work GPL-3.0. The include columns above are
-reference information, not a usage recommendation — an earlier revision of this
-note presented them as one. `sst-cpputils` and `simde` are MIT, but they exist
-only to serve `sst-basic-blocks`, so they are equally unused here. To adopt a
-primitive, reimplement it from the published DSP math and gate the result on
-this library's own tests.
+### Why `sst-basic-blocks` was removed
+
+It is GPL-3.0 and `eon_dsp` is MIT. Adding its include path to a product
+build, or shipping that code inside a plugin binary, makes the combined work
+GPL-3.0. Nothing in this repository ever included it, so it was a liability with
+no benefit — the gitlink and its `.gitmodules` stanza were dropped in
+`third_party/sst-basic-blocks` removal rather than left for someone to
+discover later.
+
+`sst-cpputils` and `simde` are MIT and are kept as reference, but they only
+existed to serve `sst-basic-blocks`, so they are equally unused here and are
+candidates for the same treatment. To adopt a primitive from any of this code,
+reimplement it from the published DSP math and gate the result on this
+library's own tests.
+
+The history is recoverable if ever needed:
+`git show cac8aaf:.gitmodules` and `git ls-tree cac8aaf third_party/`.
 
 ## Duplicate implementations elsewhere (surveyed 2026-09-18)
 
