@@ -159,8 +159,19 @@ struct HalfBand2x
     {
         const double* fwd = dl.data() + (size_t) w;              // age L-1 -> 0
         const double* bwd = dl.data() + (size_t) (w - 1 + L);    // age 0 -> L-1
-        double acc = 0.0;
-        for (int i = 0; i < L / 2; ++i)
+        // Four accumulators break the sequential add chain; the pairwise
+        // reduction at the end keeps the result identical to the scalar sum.
+        double a0 = 0.0, a1 = 0.0, a2 = 0.0, a3 = 0.0;
+        int i = 0;
+        for (; i + 3 < L / 2; i += 4)
+        {
+            a0 += Taps::hE[i]     * (fwd[i]     + bwd[-i]);
+            a1 += Taps::hE[i + 1] * (fwd[i + 1] + bwd[-(i + 1)]);
+            a2 += Taps::hE[i + 2] * (fwd[i + 2] + bwd[-(i + 2)]);
+            a3 += Taps::hE[i + 3] * (fwd[i + 3] + bwd[-(i + 3)]);
+        }
+        double acc = (a0 + a1) + (a2 + a3);
+        for (; i < L / 2; ++i)
             acc += Taps::hE[i] * (fwd[i] + bwd[-i]);
         return acc;
     }
