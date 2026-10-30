@@ -79,6 +79,7 @@ if(BUILD_TESTING AND CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
         Tests/TestMain.cpp
         Tests/NonlinearTests.cpp
         Tests/OversamplingTests.cpp
+        Tests/OversamplingReferenceTests.cpp
         Tests/RateIndependenceTests.cpp
         Tests/UtilityTests.cpp
     )
